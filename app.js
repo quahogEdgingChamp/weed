@@ -1,5 +1,17 @@
 const STORAGE_KEY = "cloudline-cannabis-log-v1";
 
+/* Server sync: weed_chart.json on the server is the source of truth. Declared
+   up here because initialize() runs before the bottom of this file. */
+const SYNC_ENDPOINT = "/api/state";
+const SYNC_POLL_MS = 5000;
+
+let syncEnabled = false;
+let syncRevision = 0;
+let syncSaveTimer = null;
+let syncInFlight = false;
+let syncNeedsSave = false;
+let applyingServerState = false;
+
 const state = {
   entries: loadEntries(),
   editingId: null,
@@ -73,6 +85,9 @@ function initialize() {
 
   render();
   showStatus("Loaded local collection.");
+
+  loadServerState();
+  window.setInterval(pollServerState, SYNC_POLL_MS);
 }
 
 function loadEntries() {
@@ -174,6 +189,7 @@ function normalizeAmount(value) {
 
 function persistEntries() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.entries));
+  queueServerSave();
 }
 
 function render() {
@@ -561,4 +577,124 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+/* ---- server sync ---------------------------------------------------------
+   The server stores entries in weed_chart.json and reports the file's mtime as
+   its revision, so editing that file by hand is noticed here within a few
+   seconds. Opened as a plain file:// page, or on a host with no backend, every
+   function below no-ops and the app behaves exactly as it did before:
+   localStorage only.
+--------------------------------------------------------------------------- */
+
+function canSync() {
+  return window.location.protocol === "http:" || window.location.protocol === "https:";
+}
+
+function readSyncResponse(response) {
+  if (!response.ok) {
+    throw new Error(`sync failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+function applyServerState(payload, message) {
+  applyingServerState = true;
+  state.entries = Array.isArray(payload.products) ? payload.products : [];
+  syncRevision = payload.revision || 0;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.entries));
+  applyingServerState = false;
+
+  resetForm();
+  render();
+  showStatus(message);
+}
+
+function loadServerState() {
+  if (!canSync()) {
+    return;
+  }
+
+  fetch(SYNC_ENDPOINT, { cache: "no-store" })
+    .then(readSyncResponse)
+    .then((payload) => {
+      syncEnabled = true;
+
+      const serverIsEmpty = !Array.isArray(payload.products) || payload.products.length === 0;
+      if (serverIsEmpty && state.entries.length > 0) {
+        syncRevision = payload.revision || 0;
+        queueServerSave();
+        showStatus("Sent this browser's collection to the server.");
+        return;
+      }
+
+      applyServerState(payload, `Loaded ${payload.products.length} entries from server.`);
+    })
+    .catch(() => {
+      syncEnabled = false;
+      showStatus("Local only - server unreachable.");
+    });
+}
+
+function pollServerState() {
+  if (!syncEnabled || syncInFlight || state.editingId) {
+    return;
+  }
+
+  fetch(SYNC_ENDPOINT, { cache: "no-store" })
+    .then(readSyncResponse)
+    .then((payload) => {
+      if ((payload.revision || 0) > syncRevision) {
+        applyServerState(payload, "Updated from weed_chart.json.");
+      }
+    })
+    .catch(() => {
+      syncEnabled = false;
+      showStatus("Sync paused - server unreachable.");
+    });
+}
+
+function queueServerSave() {
+  if (!syncEnabled || applyingServerState) {
+    return;
+  }
+
+  window.clearTimeout(syncSaveTimer);
+  syncSaveTimer = window.setTimeout(saveServerState, 300);
+}
+
+function saveServerState() {
+  if (!syncEnabled || applyingServerState) {
+    return;
+  }
+
+  if (syncInFlight) {
+    syncNeedsSave = true;
+    return;
+  }
+
+  syncInFlight = true;
+
+  fetch(SYNC_ENDPOINT, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ products: state.entries }),
+  })
+    .then(readSyncResponse)
+    .then((payload) => {
+      syncRevision = payload.revision || syncRevision;
+      showStatus("Saved to server.");
+    })
+    .catch(() => {
+      showStatus("Not saved to server.");
+    })
+    .finally(() => {
+      syncInFlight = false;
+
+      if (syncNeedsSave) {
+        syncNeedsSave = false;
+        saveServerState();
+      }
+    });
 }
