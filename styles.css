@@ -469,3 +469,116 @@ tbody tr:hover {
     grid-template-columns: 82px 1fr auto;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Tablet and phone refinements. These come last on purpose: several rules
+   deliberately override the earlier max-width: 760px block.
+--------------------------------------------------------------------------- */
+
+/* Tablets: the search box needs the full row before type/sort get squeezed. */
+@media (max-width: 900px) {
+  .toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .toolbar > *:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  /* Keep the four stat tiles two-up; one per row made the page enormous. */
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stat-card {
+    padding: 0.85rem;
+  }
+
+  /* An eight-column table can only be scrolled sideways on a phone, so each
+     row becomes a card and every cell carries its own label instead. */
+  .table-wrap {
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  table,
+  tbody,
+  tr,
+  td {
+    display: block;
+    width: 100%;
+  }
+
+  thead {
+    display: none;
+  }
+
+  tbody tr {
+    margin-bottom: 0.75rem;
+    padding: 0.3rem 0.9rem 0.8rem;
+    border: 1px solid rgba(170, 202, 189, 0.12);
+    border-radius: var(--radius-lg);
+    background: rgba(10, 18, 15, 0.9);
+  }
+
+  /* Touch devices keep :hover stuck on after a tap. */
+  tbody tr:hover {
+    background: rgba(10, 18, 15, 0.9);
+  }
+
+  td {
+    padding: 0.6rem 0;
+    border-bottom: 1px solid rgba(170, 202, 189, 0.07);
+  }
+
+  td:last-child {
+    border-bottom: 0;
+  }
+
+  /* The name cell is the card's heading. */
+  td:first-child {
+    padding-top: 0.8rem;
+  }
+
+  .entry-name strong {
+    font-size: 1.05rem;
+  }
+
+  /* Every other cell reads as "Label ......... value". */
+  td[data-label] {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  td[data-label]::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* Full-width, thumb-sized row actions. */
+  .actions-cell {
+    gap: 0.6rem;
+    padding-top: 0.8rem;
+  }
+
+  .row-button {
+    flex: 1;
+    min-height: 44px;
+    border-radius: 12px;
+  }
+
+  /* Hover lift is meaningless on touch and leaves buttons stuck mid-animation. */
+  .button:hover {
+    transform: none;
+  }
+}

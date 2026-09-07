@@ -137,7 +137,16 @@ def make_handler(site_dir: Path, data_path: Path):
 
             self.send_json({"products": products, "revision": revision})
 
+        def end_headers(self) -> None:
+            # Static assets are edited in place, so a browser must never hold a
+            # stale copy. "no-cache" still allows 304s via Last-Modified.
+            if not getattr(self, "_cache_control_sent", False):
+                self.send_header("Cache-Control", "no-cache")
+
+            super().end_headers()
+
         def send_json(self, payload: dict[str, Any]) -> None:
+            self._cache_control_sent = True
             encoded = json.dumps(payload).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")

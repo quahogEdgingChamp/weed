@@ -341,12 +341,12 @@ function renderTable(entries) {
           ${entry.favorite ? '<span class="favorite-badge">Favorite</span>' : ""}
         </div>
       </td>
-      <td>${escapeHtml(capitalize(entry.type))}</td>
-      <td>${escapeHtml(entry.brand || "-")}</td>
-      <td>${formatPercent(entry.thc)}</td>
-      <td>${formatCurrency(entry.price)}</td>
-      <td>${formatRating(entry.rating)}</td>
-      <td>${escapeHtml(formatTerpeneCell(entry))}</td>
+      <td data-label="Type">${escapeHtml(capitalize(entry.type))}</td>
+      <td data-label="Brand">${escapeHtml(entry.brand || "-")}</td>
+      <td data-label="THC">${formatPercent(entry.thc)}</td>
+      <td data-label="Price">${formatCurrency(entry.price)}</td>
+      <td data-label="Rating">${formatRating(entry.rating)}</td>
+      <td data-label="Terpenes">${escapeHtml(formatTerpeneCell(entry))}</td>
       <td class="actions-cell"></td>
     `;
 
