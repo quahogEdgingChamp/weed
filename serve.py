@@ -4,6 +4,11 @@
 The file stays plain, hand-editable JSON in the same shape the app exports.
 Its mtime doubles as the revision, so edits made directly to the file are
 picked up by open browsers without any bookkeeping fields.
+
+Two endpoints sit alongside the static files:
+
+    GET/PUT /api/state   the collection and the shopping list
+    GET     /api/lookup  ?url=<ocs.ca product link> -> prefilled fields
 """
 
 from __future__ import annotations
@@ -13,13 +18,17 @@ import http.server
 import json
 import socketserver
 import threading
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import ocs
+
 DEFAULT_PORT = 3002
 DEFAULT_HOST = "127.0.0.1"
 DATA_FILE = "weed_chart.json"
+MAX_BODY_BYTES = 16_000_000
 
 
 class ReusableTcpServer(socketserver.ThreadingTCPServer):
@@ -38,9 +47,14 @@ def revision_of(data_path: Path) -> int:
         return 0
 
 
-def read_products(data_path: Path) -> list[Any]:
+def read_state(data_path: Path) -> tuple[list[Any], list[Any]]:
+    """Return (products, wishlist) from the data file.
+
+    A bare list is still accepted: that was the original export shape, and a
+    hand-written file is allowed to leave "wishlist" out entirely.
+    """
     if not data_path.exists():
-        return []
+        return [], []
 
     try:
         with data_path.open("r", encoding="utf-8") as data_file:
@@ -51,24 +65,26 @@ def read_products(data_path: Path) -> list[Any]:
         raise DataFileError(f"{DATA_FILE} is not valid JSON: {error}") from error
 
     if isinstance(data, list):
-        return data
+        return data, []
 
     if isinstance(data, dict) and isinstance(data.get("products"), list):
-        return data["products"]
+        wishlist = data.get("wishlist")
+        return data["products"], wishlist if isinstance(wishlist, list) else []
 
     raise DataFileError(f"{DATA_FILE} has no 'products' list")
 
 
-def write_products(data_path: Path, products: list[Any]) -> None:
+def write_state(data_path: Path, products: list[Any], wishlist: list[Any]) -> None:
     payload = {
         "version": 1,
         "exportedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "products": products,
+        "wishlist": wishlist,
     }
 
     temporary_path = data_path.with_suffix(data_path.suffix + ".tmp")
     with temporary_path.open("w", encoding="utf-8") as data_file:
-        json.dump(payload, data_file, indent=2)
+        json.dump(payload, data_file, indent=2, ensure_ascii=False)
         data_file.write("\n")
 
     temporary_path.replace(data_path)
@@ -82,8 +98,14 @@ def make_handler(site_dir: Path, data_path: Path):
             super().__init__(*args, directory=str(site_dir), **kwargs)
 
         def do_GET(self) -> None:
-            if self.path == "/api/state":
+            route = urllib.parse.urlparse(self.path).path
+
+            if route == "/api/state":
                 self.send_state()
+                return
+
+            if route == "/api/lookup":
+                self.send_lookup()
                 return
 
             super().do_GET()
@@ -97,7 +119,7 @@ def make_handler(site_dir: Path, data_path: Path):
         def send_state(self) -> None:
             with state_lock:
                 try:
-                    products = read_products(data_path)
+                    products, wishlist = read_state(data_path)
                 except DataFileError as error:
                     # Never report "empty" for a broken file: the browser would
                     # happily sync that emptiness back and destroy the data.
@@ -106,24 +128,27 @@ def make_handler(site_dir: Path, data_path: Path):
 
                 revision = revision_of(data_path)
 
-            self.send_json({"products": products, "revision": revision})
+            self.send_json({"products": products, "wishlist": wishlist, "revision": revision})
+
+        def send_lookup(self) -> None:
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            url = (query.get("url") or [""])[0]
+
+            try:
+                item = ocs.lookup(url)
+            except ocs.LinkError as error:
+                self.send_json({"error": str(error)}, status=error.status)
+                return
+
+            self.send_json({"item": item})
 
         def save_state(self) -> None:
-            if self.path != "/api/state":
+            if urllib.parse.urlparse(self.path).path != "/api/state":
                 self.send_error(404)
                 return
 
-            try:
-                content_length = int(self.headers.get("Content-Length", "0"))
-            except ValueError:
-                self.send_error(400, "Invalid Content-Length")
-                return
-
-            try:
-                body = self.rfile.read(content_length).decode("utf-8")
-                incoming = json.loads(body or "{}")
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                self.send_error(400, "Invalid JSON")
+            incoming = self.read_json_body()
+            if incoming is None:
                 return
 
             products = incoming.get("products") if isinstance(incoming, dict) else incoming
@@ -131,11 +156,34 @@ def make_handler(site_dir: Path, data_path: Path):
                 self.send_error(400, "Expected a 'products' list")
                 return
 
+            wishlist = incoming.get("wishlist") if isinstance(incoming, dict) else []
+            if not isinstance(wishlist, list):
+                wishlist = []
+
             with state_lock:
-                write_products(data_path, products)
+                write_state(data_path, products, wishlist)
                 revision = revision_of(data_path)
 
-            self.send_json({"products": products, "revision": revision})
+            self.send_json({"products": products, "wishlist": wishlist, "revision": revision})
+
+        def read_json_body(self) -> Any:
+            """Decode the request body, answering the client on any failure."""
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                self.send_error(400, "Invalid Content-Length")
+                return None
+
+            if content_length > MAX_BODY_BYTES:
+                self.send_error(413, "Payload too large")
+                return None
+
+            try:
+                body = self.rfile.read(content_length).decode("utf-8")
+                return json.loads(body or "{}")
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self.send_error(400, "Invalid JSON")
+                return None
 
         def end_headers(self) -> None:
             # Static assets are edited in place, so a browser must never hold a
@@ -145,10 +193,10 @@ def make_handler(site_dir: Path, data_path: Path):
 
             super().end_headers()
 
-        def send_json(self, payload: dict[str, Any]) -> None:
+        def send_json(self, payload: dict[str, Any], status: int = 200) -> None:
             self._cache_control_sent = True
             encoded = json.dumps(payload).encode("utf-8")
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(encoded)))
             self.send_header("Cache-Control", "no-store")
