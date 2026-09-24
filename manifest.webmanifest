@@ -1,0 +1,13 @@
+{
+  "name": "Cloudline",
+  "short_name": "Cloudline",
+  "description": "Private collection journal and shopping list.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f2219",
+  "theme_color": "#0f2219",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

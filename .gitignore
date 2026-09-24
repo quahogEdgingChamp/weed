@@ -1,6 +1,10 @@
 # personal data - this repo is public
 weed_chart.json
 weed_chart.json.tmp
+backups/
 
 # python bytecode
 __pycache__/
+
+# research reports and caches (Reddit quotes, OCS catalog)
+research/

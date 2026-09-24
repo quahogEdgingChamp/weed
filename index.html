@@ -3,19 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#0e1011" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#0f2219" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#07100b" media="(prefers-color-scheme: dark)" />
     <meta
       name="description"
-      content="Private log of carts, concentrates, flower and edibles, with a shopping list that fills itself in from an OCS product link."
+      content="Private journal of carts, concentrates, flower and edibles, with a shopping list that fills itself in from an OCS product link."
     />
     <title>Cloudline</title>
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="manifest.webmanifest" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
 
     <svg class="sprite" aria-hidden="true" focusable="false">
+      <symbol id="i-leaf" viewBox="0 0 32 32"><path d="M16.00 20.00C13.28 15.62 12.60 9.15 16.00 2.50C19.40 9.15 18.72 15.62 16.00 20.00ZM16.00 20.00C15.89 15.65 18.22 10.79 23.68 7.70C23.31 13.97 19.96 18.20 16.00 20.00ZM16.00 20.00C12.04 18.20 8.69 13.97 8.32 7.70C13.78 10.79 16.11 15.65 16.00 20.00ZM16.00 20.00C17.67 16.87 21.27 14.54 26.34 14.96C23.55 19.21 19.50 20.61 16.00 20.00ZM16.00 20.00C12.50 20.61 8.45 19.21 5.66 14.96C10.73 14.54 14.33 16.87 16.00 20.00ZM16.00 20.00C18.08 18.68 20.88 18.67 23.43 21.04C20.33 22.63 17.63 21.85 16.00 20.00ZM16.00 20.00C14.37 21.85 11.67 22.63 8.57 21.04C11.12 18.67 13.92 18.68 16.00 20.00Z" /><path d="M16 20v9" class="leaf-stem" /></symbol>
       <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" /></symbol>
       <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.25" /><path d="m10.2 10.2 3 3" /></symbol>
       <symbol id="i-star" viewBox="0 0 16 16"><path d="m8 2.4 1.72 3.49 3.85.56-2.79 2.72.66 3.83L8 11.19l-3.44 1.81.66-3.83L2.43 6.45l3.85-.56Z" /></symbol>
@@ -25,41 +29,73 @@
       <symbol id="i-more" viewBox="0 0 16 16"><circle cx="8" cy="3.5" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="8" cy="12.5" r="1.3" /></symbol>
       <symbol id="i-close" viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8" /></symbol>
       <symbol id="i-check" viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7" /></symbol>
+      <symbol id="i-filter" viewBox="0 0 16 16"><path d="M2.5 4h11M4.5 8h7M6.5 12h3" /></symbol>
+      <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.75 8S4 3.75 8 3.75 14.25 8 14.25 8 12 12.25 8 12.25 1.75 8 1.75 8Z" /><circle cx="8" cy="8" r="2" /></symbol>
+      <symbol id="i-eye-off" viewBox="0 0 16 16"><path d="M6.3 4a6.6 6.6 0 0 1 1.7-.25C12 3.75 14.25 8 14.25 8a11 11 0 0 1-1.6 2.1M9.9 11.9a6 6 0 0 1-1.9.35C4 12.25 1.75 8 1.75 8a11.3 11.3 0 0 1 2.4-2.9M2.5 2.5l11 11M6.6 6.6a2 2 0 0 0 2.8 2.8" /></symbol>
+      <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" /></symbol>
+      <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.55M13 2.5v2.5h-2.5" /></symbol>
+      <symbol id="i-link" viewBox="0 0 16 16"><path d="M6.8 9.2a2.5 2.5 0 0 0 3.5 0l2.2-2.2a2.5 2.5 0 0 0-3.5-3.5l-.7.7M9.2 6.8a2.5 2.5 0 0 0-3.5 0L3.5 9a2.5 2.5 0 0 0 3.5 3.5l.7-.7" /></symbol>
+      <symbol id="i-columns" viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><path d="M8 3v10" /></symbol>
+      <symbol id="i-archive" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="3.5" rx="1" /><path d="M3.5 6.5v6a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-6M6.5 9.5h3" /></symbol>
+      <symbol id="i-note" viewBox="0 0 16 16"><path d="M4 2.5h5.5L12.5 5.5v8a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1ZM6 8.5h4M6 11h3" /></symbol>
     </svg>
 
-    <header class="appbar">
+    <header id="appbar" class="appbar">
       <div class="appbar-row">
         <p class="brand">
-          <span class="brand-mark" aria-hidden="true"></span>
-          Cloudline
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><use href="#i-leaf" /></svg></span>
+          <span class="brand-name">Cloudline</span>
+          <span class="brand-tag">stash · notes · finds</span>
         </p>
 
         <div class="appbar-tools">
-          <p id="sync-state" class="sync" data-state="pending" title="Checking for the local server">
+          <p id="privacy-indicator" class="privacy-pill" hidden>Privacy on</p>
+
+          <button id="sync-state" class="sync" type="button" data-state="loading" aria-describedby="sync-detail">
             <span class="sync-dot" aria-hidden="true"></span>
-            <span id="sync-label">Checking</span>
-          </p>
+            <span id="sync-label">Loading</span>
+            <span id="sync-detail" class="sr-only"></span>
+          </button>
+
+          <button id="privacy-button" class="btn btn-icon" type="button" aria-pressed="false" title="Privacy mode: hide prices and notes">
+            <svg class="icon" aria-hidden="true"><use href="#i-eye" /></svg>
+            <span class="sr-only">Privacy mode</span>
+          </button>
 
           <div class="menu">
             <button
               id="menu-button"
               class="btn btn-icon"
               type="button"
-              aria-haspopup="true"
               aria-expanded="false"
               aria-controls="menu-panel"
             >
               <svg class="icon" aria-hidden="true"><use href="#i-more" /></svg>
-              <span class="sr-only">Data menu</span>
+              <span class="sr-only">Data and settings</span>
             </button>
 
-            <div id="menu-panel" class="menu-panel" role="menu" hidden>
-              <button id="export-button" class="menu-item" type="button" role="menuitem">Export JSON</button>
-              <label class="menu-item" for="import-input" role="menuitem" tabindex="0">Import JSON</label>
-              <input id="import-input" class="sr-only" type="file" accept=".json,application/json" />
+            <div id="menu-panel" class="menu-panel" hidden>
+              <p class="menu-label">Data</p>
+              <button id="export-button" class="menu-item" type="button">Export JSON</button>
+              <button id="import-button" class="menu-item" type="button">Import JSON&hellip;</button>
+              <input id="import-input" type="file" accept=".json,application/json" hidden />
+              <button id="backups-button" class="menu-item" type="button">Backups &amp; recovery&hellip;</button>
+              <button id="trash-button" class="menu-item" type="button">Recently deleted&hellip;</button>
+              <button id="tags-button" class="menu-item" type="button">Manage tags&hellip;</button>
               <hr />
-              <button id="reset-button" class="menu-item menu-item-danger" type="button" role="menuitem">
-                Clear local data
+              <p class="menu-label" id="theme-label">Theme</p>
+              <div class="segmented" role="group" aria-labelledby="theme-label">
+                <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+                <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+                <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+              </div>
+              <label class="menu-check">
+                <input id="reminders-toggle" type="checkbox" />
+                Remind me to rate purchases
+              </label>
+              <hr />
+              <button id="reset-button" class="menu-item menu-item-danger" type="button">
+                Clear collection and shopping list&hellip;
               </button>
             </div>
           </div>
@@ -67,56 +103,105 @@
       </div>
 
       <nav class="tabs" aria-label="Sections">
-        <button class="tab" type="button" data-view="collection" aria-current="page">
+        <a class="tab" href="?view=collection" data-view="collection" aria-current="page">
           Collection <span id="tab-count-collection" class="tab-count">0</span>
-        </button>
-        <button class="tab" type="button" data-view="shopping">
+        </a>
+        <a class="tab" href="?view=favorites" data-view="favorites">
+          Favorites <span id="tab-count-favorites" class="tab-count">0</span>
+        </a>
+        <a class="tab" href="?view=shopping" data-view="shopping">
           Shopping list <span id="tab-count-shopping" class="tab-count">0</span>
-        </button>
+        </a>
+        <a class="tab" href="?view=insights" data-view="insights">Insights</a>
+        <a class="tab" href="?view=research" data-view="research">Research</a>
       </nav>
     </header>
 
+    <div id="banner" class="banner" role="alert" hidden>
+      <p id="banner-text"></p>
+      <div class="banner-actions">
+        <button id="banner-retry" class="btn btn-secondary btn-small" type="button">Retry</button>
+        <button id="banner-export" class="btn btn-secondary btn-small" type="button">Export a backup</button>
+      </div>
+    </div>
+
     <main id="main">
-      <!-- ── Collection ─────────────────────────────────────────────────── -->
-      <section id="view-collection" class="view" aria-label="Collection">
-        <ul class="stats">
-          <li class="stat">
-            <span class="stat-label">Entries</span>
-            <strong id="stat-total" class="stat-value">0</strong>
-          </li>
-          <li class="stat">
-            <span class="stat-label">Favorites</span>
-            <strong id="stat-favorites" class="stat-value">0</strong>
-          </li>
-          <li class="stat">
-            <span class="stat-label">Average THC</span>
-            <strong id="stat-average-thc" class="stat-value">&mdash;</strong>
-          </li>
-          <li class="stat">
-            <span class="stat-label">Total spend</span>
-            <strong id="stat-spend" class="stat-value">&mdash;</strong>
-          </li>
-        </ul>
+      <!-- ── Collection and Favorites share one view ────────────────────── -->
+      <section id="view-collection" class="view" aria-labelledby="collection-heading">
+        <div class="page-head">
+          <div>
+            <h1 id="collection-heading">Collection</h1>
+            <p id="collection-description" class="page-desc">
+              Everything you've bought, what it was like, and whether to buy it again.
+            </p>
+          </div>
+          <div class="page-actions">
+            <button id="ocs-entry-button" class="btn btn-secondary" type="button">
+              <svg class="icon" aria-hidden="true"><use href="#i-link" /></svg>
+              From OCS link
+            </button>
+            <button id="add-entry-button" class="btn btn-primary" type="button">
+              <svg class="icon" aria-hidden="true"><use href="#i-plus" /></svg>
+              Add entry
+            </button>
+          </div>
+        </div>
+
+        <section aria-labelledby="totals-heading">
+          <h2 id="totals-heading" class="eyebrow">All entries</h2>
+          <ul class="stats">
+            <li class="stat">
+              <span class="stat-label">Entries</span>
+              <strong id="stat-total" class="stat-value">0</strong>
+            </li>
+            <li class="stat">
+              <span class="stat-label">Favorites</span>
+              <strong id="stat-favorites" class="stat-value">0</strong>
+            </li>
+            <li class="stat">
+              <span class="stat-label">Total spend</span>
+              <strong id="stat-spend" class="stat-value private">&mdash;</strong>
+            </li>
+            <li class="stat">
+              <span class="stat-label">Spent this month</span>
+              <strong id="stat-month" class="stat-value private">&mdash;</strong>
+              <span id="stat-month-note" class="stat-note private"></span>
+            </li>
+          </ul>
+        </section>
+
+        <div id="reminder" class="notice" hidden>
+          <p id="reminder-text"></p>
+          <div class="notice-actions">
+            <button id="reminder-review" class="btn btn-secondary btn-small" type="button">Rate the next one</button>
+            <button id="reminder-snooze" class="btn btn-ghost btn-small" type="button">Snooze a week</button>
+            <button id="reminder-off" class="btn btn-ghost btn-small" type="button">Turn off</button>
+          </div>
+        </div>
 
         <div class="toolbar">
           <div class="search">
             <svg class="icon search-icon" aria-hidden="true"><use href="#i-search" /></svg>
-            <input id="search-input" type="search" placeholder="Search name, brand, strain, terpenes&hellip;" aria-label="Search entries" />
+            <input
+              id="search-input"
+              type="search"
+              placeholder="Search name, brand, tags, notes&hellip;"
+              aria-label="Search entries"
+              aria-keyshortcuts="/"
+            />
+            <kbd class="search-key" aria-hidden="true">/</kbd>
           </div>
 
-          <label class="select">
-            <span class="sr-only">Filter by type</span>
-            <select id="filter-type">
-              <option value="all">All types</option>
-              <option value="cart">Cart</option>
-              <option value="disposable">Disposable</option>
-              <option value="concentrate">Concentrate</option>
-              <option value="flower">Flower</option>
-              <option value="edible">Edible</option>
-              <option value="tincture">Tincture</option>
-              <option value="other">Other</option>
-            </select>
-          </label>
+          <button
+            id="filter-toggle"
+            class="btn btn-secondary"
+            type="button"
+            aria-expanded="false"
+            aria-controls="filter-panel"
+          >
+            <svg class="icon" aria-hidden="true"><use href="#i-filter" /></svg>
+            Filters <span id="filter-count" class="count-badge" hidden>0</span>
+          </button>
 
           <label class="select">
             <span class="sr-only">Sort entries</span>
@@ -124,64 +209,159 @@
               <option value="purchaseDate-desc">Newest purchase</option>
               <option value="purchaseDate-asc">Oldest purchase</option>
               <option value="rating-desc">Highest rating</option>
-              <option value="thc-desc">Highest THC</option>
+              <option value="thc-desc">Highest THC %</option>
               <option value="price-desc">Highest price</option>
+              <option value="price-asc">Lowest price</option>
+              <option value="unitPrice-asc">Best value per gram</option>
+              <option value="updated-desc">Recently edited</option>
               <option value="name-asc">Name A&ndash;Z</option>
             </select>
           </label>
-
-          <button id="add-entry-button" class="btn btn-primary" type="button">
-            <svg class="icon" aria-hidden="true"><use href="#i-plus" /></svg>
-            Add entry
-          </button>
         </div>
 
-        <div class="card table-card">
-          <div class="table-scroll">
-            <table>
-              <caption class="sr-only">Logged products</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Product</th>
-                  <th scope="col">Type</th>
-                  <th scope="col" class="num">THC</th>
-                  <th scope="col" class="num">CBD</th>
-                  <th scope="col" class="num">Price</th>
-                  <th scope="col" class="num">Rating</th>
-                  <th scope="col">Terpenes</th>
-                  <th scope="col"><span class="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody id="entries-body"></tbody>
-            </table>
+        <section id="filter-panel" class="card filter-panel" aria-label="Filters" hidden>
+          <fieldset class="filter-group">
+            <legend>Type</legend>
+            <div id="filter-types" class="check-chips"></div>
+          </fieldset>
+
+          <fieldset class="filter-group">
+            <legend>Status</legend>
+            <div id="filter-statuses" class="check-chips"></div>
+          </fieldset>
+
+          <fieldset class="filter-group" id="filter-brands-group">
+            <legend>Brand</legend>
+            <div id="filter-brands" class="check-chips"></div>
+          </fieldset>
+
+          <fieldset class="filter-group" id="filter-tags-group">
+            <legend>Tags <span class="hint">entries must have all selected</span></legend>
+            <div id="filter-tags" class="check-chips"></div>
+          </fieldset>
+
+          <div class="filter-fields">
+            <label>
+              Minimum rating
+              <select id="filter-rating">
+                <option value="">Any</option>
+                <option value="5">5+</option>
+                <option value="6">6+</option>
+                <option value="7">7+</option>
+                <option value="8">8+</option>
+                <option value="9">9+</option>
+              </select>
+            </label>
+            <label>
+              Price from
+              <input id="filter-price-min" type="number" min="0" step="1" inputmode="decimal" placeholder="0" />
+            </label>
+            <label>
+              Price to
+              <input id="filter-price-max" type="number" min="0" step="1" inputmode="decimal" placeholder="Any" />
+            </label>
+            <label>
+              Bought from
+              <input id="filter-date-from" type="date" />
+            </label>
+            <label>
+              Bought to
+              <input id="filter-date-to" type="date" />
+            </label>
+            <label class="check-line">
+              <input id="filter-repurchase" type="checkbox" />
+              Would buy again
+            </label>
+          </div>
+
+          <div class="saved-views">
+            <p class="filter-legend">Saved views</p>
+            <div id="saved-views" class="saved-view-list"></div>
+            <button id="save-view-button" class="btn btn-ghost btn-small" type="button">Save current view&hellip;</button>
+          </div>
+        </section>
+
+        <div class="results-bar">
+          <p id="result-count" class="result-count"></p>
+          <div id="filter-chips" class="filter-chips"></div>
+        </div>
+
+        <div id="bulk-bar" class="bulk-bar" hidden>
+          <p id="bulk-count" class="bulk-count"></p>
+          <button id="bulk-select-all" class="btn btn-ghost btn-small" type="button"></button>
+          <button id="bulk-clear" class="btn btn-ghost btn-small" type="button">Clear selection</button>
+          <div class="bulk-actions">
+            <button id="bulk-compare" class="btn btn-secondary btn-small" type="button">
+              <svg class="icon" aria-hidden="true"><use href="#i-columns" /></svg>
+              Compare
+            </button>
+            <button id="bulk-edit" class="btn btn-secondary btn-small" type="button">Edit&hellip;</button>
+            <button id="bulk-export" class="btn btn-secondary btn-small" type="button">Export</button>
+            <button id="bulk-delete" class="btn btn-danger btn-small" type="button">Delete</button>
           </div>
         </div>
 
-        <div class="breakdown">
-          <section class="card panel">
-            <h2 class="panel-title">Products by type</h2>
-            <p class="panel-note">Count of the entries currently shown.</p>
-            <div id="type-bars" class="bars"></div>
-          </section>
-
-          <section class="card panel">
-            <h2 class="panel-title">Strongest THC</h2>
-            <p class="panel-note">Top three of the entries currently shown.</p>
-            <ol id="top-thc-list" class="ranks"></ol>
-          </section>
+        <div id="table-card" class="card table-card">
+          <table>
+            <caption class="sr-only">Logged products</caption>
+            <thead>
+              <tr>
+                <th scope="col" class="col-select">
+                  <input id="select-visible" type="checkbox" aria-label="Select all shown entries" />
+                </th>
+                <th scope="col">Product</th>
+                <th scope="col">Type</th>
+                <th scope="col" class="num">THC</th>
+                <th scope="col" class="num">Price</th>
+                <th scope="col" class="num">Rating</th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="entries-body"></tbody>
+          </table>
         </div>
+
+        <div id="collection-empty" class="empty" hidden>
+          <p id="empty-title" class="empty-title"></p>
+          <p id="empty-note" class="empty-note"></p>
+          <div id="empty-actions" class="empty-actions"></div>
+        </div>
+
+        <section class="breakdown-section" aria-labelledby="results-heading">
+          <h2 id="results-heading" class="eyebrow">Current results</h2>
+          <div class="breakdown">
+            <section class="card panel">
+              <h3 class="panel-title">By type</h3>
+              <p class="panel-note">Select a bar to filter to that type.</p>
+              <div id="type-bars" class="bars"></div>
+            </section>
+
+            <section class="card panel">
+              <h3 class="panel-title">Strongest THC</h3>
+              <p class="panel-note">Percentage products only; select one to open it.</p>
+              <ol id="top-thc-list" class="ranks"></ol>
+            </section>
+          </div>
+        </section>
       </section>
 
       <!-- ── Shopping list ──────────────────────────────────────────────── -->
-      <section id="view-shopping" class="view" aria-label="Shopping list" hidden>
-        <section class="card importer">
-          <h2 class="panel-title">Add from OCS</h2>
+      <section id="view-shopping" class="view" aria-labelledby="shopping-heading" hidden>
+        <div class="page-head">
+          <div>
+            <h1 id="shopping-heading">Shopping list</h1>
+            <p class="page-desc">Things to try next. Log one when you buy it and it moves into your collection.</p>
+          </div>
+        </div>
+
+        <section class="card importer" aria-labelledby="importer-heading">
+          <h2 id="importer-heading" class="panel-title">Add from OCS</h2>
           <p class="panel-note">
             Paste a product link from ocs.ca. Name, brand, potency, terpenes, size and price are
             filled in for you.
           </p>
 
-          <form id="link-form" class="link-form">
+          <form id="link-form" class="link-form" novalidate>
             <label class="sr-only" for="link-input">OCS product link</label>
             <input
               id="link-input"
@@ -190,18 +370,26 @@
               autocomplete="off"
               spellcheck="false"
               placeholder="https://ocs.ca/products/&hellip;"
+              aria-describedby="link-status"
             />
-            <button id="link-submit" class="btn btn-primary" type="submit">Look up</button>
+            <button id="link-submit" class="btn btn-primary" type="submit">
+              <span class="spinner" aria-hidden="true"></span>
+              <span class="btn-label">Look up</span>
+            </button>
           </form>
 
-          <p id="link-status" class="form-status" role="status" aria-live="polite"></p>
+          <div id="link-status" class="form-status" role="status" aria-live="polite">
+            <span id="link-status-text"></span>
+            <button id="link-retry" class="btn btn-ghost btn-small" type="button" hidden>Try again</button>
+          </div>
 
-          <details class="manual">
+          <details id="manual-details" class="manual">
             <summary>Add an item by hand</summary>
-            <form id="manual-form" class="manual-form">
+            <form id="manual-form" class="manual-form" novalidate>
               <label>
                 Product
-                <input id="manual-name" type="text" required placeholder="Lemon Cherry Live Resin" />
+                <input id="manual-name" type="text" required placeholder="Lemon Cherry Live Resin" aria-describedby="manual-name-error" />
+                <span id="manual-name-error" class="field-error" hidden></span>
               </label>
               <label>
                 Brand
@@ -211,35 +399,125 @@
                 Price
                 <input id="manual-price" type="number" step="0.01" min="0" inputmode="decimal" placeholder="45.00" />
               </label>
+              <label>
+                Priority
+                <select id="manual-priority">
+                  <option value="high">High</option>
+                  <option value="normal" selected>Normal</option>
+                  <option value="low">Low</option>
+                </select>
+              </label>
+              <label class="span-all">
+                Why it's interesting
+                <input id="manual-note" type="text" placeholder="Friend recommended it, saw it at the store&hellip;" />
+              </label>
               <button class="btn btn-secondary" type="submit">Add to list</button>
             </form>
           </details>
         </section>
 
         <div class="wish-summary">
-          <p id="wish-count" class="wish-count">Nothing on the list</p>
-          <p id="wish-total" class="wish-total"></p>
+          <div>
+            <p id="wish-count" class="wish-count">Nothing on the list</p>
+            <p id="wish-total" class="wish-total private"></p>
+          </div>
+          <label class="select">
+            <span class="sr-only">Sort shopping list</span>
+            <select id="wish-sort">
+              <option value="priority">Priority</option>
+              <option value="match">Best match for you</option>
+              <option value="added-desc">Recently added</option>
+              <option value="price-asc">Lowest price</option>
+              <option value="price-desc">Highest price</option>
+              <option value="name-asc">Name A&ndash;Z</option>
+            </select>
+          </label>
         </div>
 
         <ul id="wishlist" class="wish-grid"></ul>
       </section>
+
+      <!-- ── Insights ───────────────────────────────────────────────────── -->
+      <section id="view-insights" class="view" aria-labelledby="insights-heading" hidden>
+        <div class="page-head">
+          <div>
+            <h1 id="insights-heading">Insights</h1>
+            <p class="page-desc">Patterns in what you buy and how you rate it. Built only from your own records.</p>
+          </div>
+        </div>
+
+        <div class="insight-grid">
+          <section class="card panel span-wide" aria-labelledby="spend-heading">
+            <div class="panel-head">
+              <div>
+                <h2 id="spend-heading" class="panel-title">Monthly spend</h2>
+                <p id="spend-note" class="panel-note"></p>
+              </div>
+            </div>
+            <div id="spend-chart" class="month-chart private"></div>
+          </section>
+
+          <section class="card panel" aria-labelledby="budget-heading">
+            <h2 id="budget-heading" class="panel-title">Budget</h2>
+            <p class="panel-note">Optional. Counts dated purchases in the current month.</p>
+            <form id="budget-form" class="budget-form" novalidate>
+              <label>
+                Monthly budget
+                <input id="budget-input" type="number" min="0" step="1" inputmode="decimal" placeholder="No budget" />
+              </label>
+              <button class="btn btn-secondary" type="submit">Save</button>
+            </form>
+            <div id="budget-summary" class="budget-summary private"></div>
+          </section>
+
+          <section class="card panel" aria-labelledby="inventory-heading">
+            <h2 id="inventory-heading" class="panel-title">Inventory</h2>
+            <p class="panel-note">From the status you set on each entry.</p>
+            <div id="inventory-summary" class="bars"></div>
+          </section>
+
+          <section class="card panel" aria-labelledby="ratings-heading">
+            <h2 id="ratings-heading" class="panel-title">Ratings</h2>
+            <p id="ratings-note" class="panel-note"></p>
+            <div id="rating-chart" class="bars"></div>
+          </section>
+
+          <section class="card panel" aria-labelledby="brands-heading">
+            <h2 id="brands-heading" class="panel-title">Favorites by brand</h2>
+            <p class="panel-note">Select a brand to filter the collection.</p>
+            <div id="brand-chart" class="bars"></div>
+          </section>
+
+          <section class="card panel span-wide" aria-labelledby="repurchase-heading">
+            <h2 id="repurchase-heading" class="panel-title">Worth buying again</h2>
+            <p class="panel-note">
+              Entries you marked "would buy again", then favorites and anything rated 8 or more, best rated
+              first. Prices are what you actually paid.
+            </p>
+            <div id="repurchase-list" class="insight-table"></div>
+          </section>
+
+          <section class="card panel span-wide" aria-labelledby="value-heading">
+            <h2 id="value-heading" class="panel-title">Value per gram</h2>
+            <p id="value-note" class="panel-note"></p>
+            <div id="value-list" class="insight-table private"></div>
+          </section>
+        </div>
+      </section>
+      <!-- ── Research: community guides built by research.py ───────────── -->
+      <section id="view-research" class="view" aria-labelledby="research-heading" hidden>
+        <div id="research-root" class="research"></div>
+      </section>
     </main>
 
-    <!-- ── Entry drawer ─────────────────────────────────────────────────── -->
+    <!-- ── Drawer: product details and the entry form ───────────────────── -->
     <div id="scrim" class="scrim" hidden></div>
 
-    <aside
-      id="drawer"
-      class="drawer"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="drawer-title"
-      hidden
-    >
+    <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
       <header class="drawer-head">
-        <div>
+        <div class="drawer-heading">
           <h2 id="drawer-title">Add entry</h2>
-          <p id="drawer-subtitle" class="panel-note">New record in your collection</p>
+          <p id="drawer-subtitle" class="panel-note"></p>
         </div>
         <button id="drawer-close" class="btn btn-icon" type="button">
           <svg class="icon" aria-hidden="true"><use href="#i-close" /></svg>
@@ -247,120 +525,223 @@
         </button>
       </header>
 
-      <form id="product-form" class="drawer-body">
-        <input id="entry-id" name="entryId" type="hidden" />
+      <div id="detail-view" class="drawer-body detail" hidden></div>
 
-        <label class="span-2">
-          Product name
-          <input id="name" name="name" type="text" placeholder="Lemon Cherry Live Resin" required />
-        </label>
+      <form id="product-form" class="drawer-body entry-form" novalidate hidden>
+        <div id="draft-notice" class="notice notice-inline" hidden>
+          <p>You have an unsaved draft from earlier.</p>
+          <div class="notice-actions">
+            <button id="draft-restore" class="btn btn-secondary btn-small" type="button">Restore it</button>
+            <button id="draft-discard" class="btn btn-ghost btn-small" type="button">Discard</button>
+          </div>
+        </div>
 
-        <label>
-          Type
-          <select id="type" name="type" required>
-            <option value="cart">Cart</option>
-            <option value="disposable">Disposable</option>
-            <option value="concentrate">Concentrate</option>
-            <option value="flower">Flower</option>
-            <option value="edible">Edible</option>
-            <option value="tincture">Tincture</option>
-            <option value="other">Other</option>
-          </select>
-        </label>
+        <div id="form-ocs" class="form-ocs">
+          <label for="form-ocs-input">Fill in from an OCS link <span class="hint">optional</span></label>
+          <div class="link-form">
+            <input id="form-ocs-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://ocs.ca/products/&hellip;" aria-describedby="form-ocs-status" />
+            <button id="form-ocs-button" class="btn btn-secondary" type="button">
+              <span class="spinner" aria-hidden="true"></span>
+              <span class="btn-label">Fill in</span>
+            </button>
+          </div>
+          <p id="form-ocs-status" class="form-status" role="status" aria-live="polite"></p>
+        </div>
 
-        <label>
-          Brand
-          <input id="brand" name="brand" type="text" placeholder="Brand or grower" />
-        </label>
+        <fieldset class="form-section">
+          <legend>Product</legend>
+          <div class="form-grid">
+            <label class="span-2">
+              Product name <span class="req" aria-hidden="true">*</span>
+              <input id="name" name="name" type="text" placeholder="Lemon Cherry Live Resin" required aria-describedby="name-error duplicate-hint" autocomplete="off" />
+              <span id="name-error" class="field-error" hidden></span>
+              <span id="duplicate-hint" class="field-hint" hidden></span>
+            </label>
 
-        <label>
-          Strain
-          <input id="strain" name="strain" type="text" placeholder="Indica, sativa, hybrid" />
-        </label>
+            <label>
+              Type
+              <select id="type" name="type">
+                <option value="cart">Cart</option>
+                <option value="disposable">Disposable</option>
+                <option value="concentrate">Concentrate</option>
+                <option value="flower">Flower</option>
+                <option value="edible">Edible</option>
+                <option value="tincture">Tincture</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
 
-        <label>
-          Extraction / style
-          <input id="extraction" name="extraction" type="text" placeholder="Live resin, rosin, distillate" />
-        </label>
+            <label>
+              Brand
+              <input id="brand" name="brand" type="text" placeholder="Brand or grower" list="brand-options" autocomplete="off" />
+            </label>
 
-        <label>
-          Amount
-          <input id="amount" name="amount" type="text" placeholder="1g, 3.5g, 10-pack" />
-        </label>
+            <label>
+              Price paid
+              <input id="price" name="price" type="number" step="0.01" min="0" max="100000" inputmode="decimal" placeholder="45.00" aria-describedby="price-error" />
+              <span id="price-error" class="field-error" hidden></span>
+            </label>
 
-        <label>
-          Vendor
-          <input id="vendor" name="vendor" type="text" placeholder="Store name" />
-        </label>
+            <label>
+              Rating <span class="hint">0&ndash;10</span>
+              <input id="rating" name="rating" type="number" step="0.5" min="0" max="10" inputmode="decimal" placeholder="8.5" aria-describedby="rating-error" />
+              <span id="rating-error" class="field-error" hidden></span>
+            </label>
+          </div>
+        </fieldset>
 
-        <label>
-          THC %
-          <input id="thc" name="thc" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="82.5" />
-        </label>
+        <details id="section-purchase" class="form-section form-more">
+          <summary>Potency &amp; purchase</summary>
+          <div class="form-grid">
+            <label>
+              Purchase date
+              <input id="purchaseDate" name="purchaseDate" type="date" aria-describedby="purchaseDate-error" />
+              <span id="purchaseDate-error" class="field-error" hidden></span>
+            </label>
 
-        <label>
-          CBD %
-          <input id="cbd" name="cbd" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="1.2" />
-        </label>
+            <label>
+              Vendor
+              <input id="vendor" name="vendor" type="text" placeholder="Store name" list="vendor-options" autocomplete="off" />
+            </label>
 
-        <label>
-          Terpene %
-          <input id="terpenePercent" name="terpenePercent" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="6.3" />
-        </label>
+            <label>
+              Amount
+              <input id="amount" name="amount" type="text" placeholder="1g, 3.5g, 10-pack" aria-describedby="amount-hint" />
+              <span id="amount-hint" class="field-hint" hidden></span>
+            </label>
 
-        <label>
-          Purchase date
-          <input id="purchaseDate" name="purchaseDate" type="date" />
-        </label>
+            <label>
+              Strain / plant type
+              <input id="strain" name="strain" type="text" placeholder="Indica, sativa, hybrid" />
+            </label>
 
-        <label>
-          Price
-          <input id="price" name="price" type="number" step="0.01" min="0" inputmode="decimal" placeholder="45.00" />
-        </label>
+            <label>
+              Extraction / style
+              <input id="extraction" name="extraction" type="text" placeholder="Live resin, rosin, distillate" />
+            </label>
 
-        <label>
-          Rating <span class="hint">out of 10</span>
-          <input id="rating" name="rating" type="number" step="0.5" min="0" max="10" inputmode="decimal" placeholder="8.5" />
-        </label>
+            <label>
+              Batch / lot
+              <input id="batch" name="batch" type="text" placeholder="Printed on the package" />
+            </label>
 
-        <label class="span-2">
-          Terpene breakdown
-          <input id="terpenes" name="terpenes" type="text" placeholder="Limonene, caryophyllene, myrcene" />
-        </label>
+            <fieldset class="span-2 unit-choice">
+              <legend>Potency measured in</legend>
+              <label class="radio"><input type="radio" name="potencyUnit" value="%" checked /> Percent (%)</label>
+              <label class="radio"><input type="radio" name="potencyUnit" value="mg" /> Milligrams (mg)</label>
+            </fieldset>
 
-        <label class="span-2">
-          Effects
-          <input id="effects" name="effects" type="text" placeholder="Relaxed, euphoric, sleepy, creative" />
-        </label>
+            <label>
+              THC <span class="unit-label hint">%</span>
+              <input id="thc" name="thc" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="82.5" aria-describedby="thc-error" />
+              <span id="thc-error" class="field-error" hidden></span>
+            </label>
 
-        <label class="span-2">
-          Notes
-          <textarea id="notes" name="notes" rows="4" placeholder="Flavour, harshness, hardware, repurchase?"></textarea>
-        </label>
+            <label>
+              CBD <span class="unit-label hint">%</span>
+              <input id="cbd" name="cbd" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="1.2" aria-describedby="cbd-error" />
+              <span id="cbd-error" class="field-error" hidden></span>
+            </label>
 
-        <label class="switch span-2">
+            <label>
+              Total terpenes <span class="hint">%</span>
+              <input id="terpenePercent" name="terpenePercent" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="6.3" aria-describedby="terpenePercent-error" />
+              <span id="terpenePercent-error" class="field-error" hidden></span>
+            </label>
+
+            <label class="span-2">
+              Terpene breakdown
+              <input id="terpenes" name="terpenes" type="text" placeholder="Limonene, caryophyllene, myrcene" />
+            </label>
+          </div>
+        </details>
+
+        <details id="section-experience" class="form-section form-more">
+          <summary>Experience &amp; notes</summary>
+          <div class="form-grid">
+            <fieldset class="span-2 unit-choice">
+              <legend>Would you buy it again?</legend>
+              <label class="radio"><input type="radio" name="wouldRepurchase" value="yes" /> Yes</label>
+              <label class="radio"><input type="radio" name="wouldRepurchase" value="no" /> No</label>
+              <label class="radio"><input type="radio" name="wouldRepurchase" value="" checked /> Not sure yet</label>
+            </fieldset>
+
+            <label class="span-2">
+              Effects
+              <input id="effects" name="effects" type="text" placeholder="Relaxed, euphoric, sleepy, creative" />
+            </label>
+
+            <label class="span-2">
+              Tags <span class="hint">comma-separated</span>
+              <input id="tags" name="tags" type="text" placeholder="great flavour, weekend, harsh" list="tag-options" autocomplete="off" />
+            </label>
+
+            <label class="span-2">
+              Notes
+              <textarea id="notes" name="notes" rows="4" placeholder="Flavour, harshness, hardware, anything worth remembering"></textarea>
+            </label>
+          </div>
+        </details>
+
+        <details id="section-inventory" class="form-section form-more">
+          <summary>Inventory</summary>
+          <div class="form-grid">
+            <label>
+              Status
+              <select id="status" name="status">
+                <option value="">Not tracked</option>
+                <option value="unopened">Unopened</option>
+                <option value="open">In use</option>
+                <option value="finished">Finished</option>
+              </select>
+            </label>
+
+            <label>
+              Opened on
+              <input id="openedAt" name="openedAt" type="date" />
+            </label>
+
+            <label class="span-2">
+              Amount left <span class="hint">your own estimate</span>
+              <input id="remaining" name="remaining" type="text" placeholder="About half" />
+            </label>
+          </div>
+        </details>
+
+        <label class="switch">
           <input id="favorite" name="favorite" type="checkbox" />
           <span>Mark as a favorite</span>
         </label>
+
       </form>
 
-      <footer class="drawer-foot">
+      <footer id="detail-foot" class="drawer-foot" hidden></footer>
+
+      <footer id="form-foot" class="drawer-foot" hidden>
+        <p id="form-error" class="form-error" role="alert"></p>
         <button id="drawer-cancel" class="btn btn-secondary" type="button">Cancel</button>
-        <button class="btn btn-primary" type="submit" form="product-form">Save entry</button>
+        <button id="form-submit" class="btn btn-primary" type="submit" form="product-form">Save entry</button>
       </footer>
     </aside>
 
-    <p id="toast" class="toast" role="status" aria-live="polite" hidden></p>
+    <!-- ── Dialogs: confirmations, import, compare, backups, trash, tags ─── -->
+    <div id="dialog-layer" class="dialog-layer" hidden>
+      <div id="dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"></div>
+    </div>
 
-    <template id="empty-row-template">
-      <tr class="empty-row">
-        <td colspan="8">
-          <p class="empty-title">Nothing here yet</p>
-          <p class="empty-note">Add an entry, or clear the search and filters.</p>
-        </td>
-      </tr>
-    </template>
+    <div id="toast" class="toast" hidden>
+      <p id="toast-text" role="status" aria-live="polite"></p>
+      <button id="toast-action" class="toast-action" type="button" hidden></button>
+    </div>
 
+    <p id="announcer" class="sr-only" aria-live="polite"></p>
+
+    <datalist id="brand-options"></datalist>
+    <datalist id="vendor-options"></datalist>
+    <datalist id="tag-options"></datalist>
+
+    <script src="core.js"></script>
     <script src="app.js"></script>
+    <script src="research.js"></script>
   </body>
 </html>
