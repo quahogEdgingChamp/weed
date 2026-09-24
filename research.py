@@ -1371,6 +1371,37 @@ def gather(topic_key: str, query: str = "", *, depth: str = "quick", subreddits:
     return state
 
 
+RETRY_NOTE = """
+
+IMPORTANT: everything you need is in this message; nothing more is coming and there is nothing to look up.
+Your previous answer was empty or a placeholder. Answer now, in full, from the evidence above."""
+
+
+def notes_empty(data: dict[str, Any]) -> bool:
+    return not any(data.get(key) for key in ("products", "brands", "trends", "warnings", "questions", "tips"))
+
+
+def ask_checked(provider: str, *, prompt: str, schema: dict[str, Any], model: str, effort: str,
+                cancel: threading.Event | None, log: Callable[[str], None], timeout: int, label: str,
+                spend: Callable[[dict[str, Any]], None], lock: threading.Lock,
+                empty: Callable[[dict[str, Any]], bool]) -> dict[str, Any]:
+    """One model call, retried once if the answer is empty or a placeholder.
+
+    An empty answer twice is a failure (ModelError), never a result: a guide
+    with no products or notes with nothing in them must not pass as done.
+    """
+    for attempt in (1, 2):
+        result = llm.ask(provider, system=SYSTEM_PROMPT, prompt=prompt + (RETRY_NOTE if attempt == 2 else ""),
+                         schema=schema, model=model, effort=effort, cancel=cancel, log=log, timeout=timeout,
+                         label=label)
+        with lock:
+            spend(result)
+        if not empty(result["data"]):
+            return result
+        log(f"{label} answered with nothing in it" + ("; asking once more" if attempt == 1 else ""))
+    raise llm.ModelError(f"{label} gave an empty answer twice")
+
+
 def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str = "", out_dir: Path,
           progress: Callable[..., None] | None = None, cancel: threading.Event | None = None) -> Path:
     """Stage 5: the model calls, then the saved guide.
@@ -1418,12 +1449,12 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
                 def read_part(index: int) -> None:
                     prompt = (NOTES_INSTRUCTIONS.format(part=index, parts=len(batches), label=topic["label"])
                               + state["head"] + "\n## Threads in this part\n\n" + batches[index - 1]["text"])
-                    result = llm.ask(provider, system=SYSTEM_PROMPT, prompt=prompt, schema=NOTES_SCHEMA, model=model,
-                                     effort=effort, cancel=cancel, log=logger("write"), timeout=1500,
-                                     label=f"{who} (part {index})")
+                    result = ask_checked(provider, prompt=prompt, schema=NOTES_SCHEMA, model=model, effort=effort,
+                                         cancel=cancel, log=logger("write"), timeout=1500,
+                                         label=f"{who} (part {index})", spend=spend, lock=lock,
+                                         empty=lambda data: batches[index - 1]["comments"] >= 5 and notes_empty(data))
                     with lock:
                         notes[str(index)] = {"data": result["data"], "by": f"{who} ({result['model']})"}
-                        spend(result)
                         save("running")
                         report("write", f"{who} finished reading part {index} of {len(batches)} "
                                         f"({len(notes)} done)", parts_done=len(notes))
@@ -1463,13 +1494,13 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
                 packet = state["packet"]
                 report("write", f"{who} is reading the threads and writing the guide (a few minutes)")
 
-            result = llm.ask(provider, system=SYSTEM_PROMPT,
-                             prompt=INSTRUCTIONS.format(label=topic["label"], focus=topic["focus"],
-                                                        n_products={"quick": "12–20", "standard": "18–30",
-                                                                    "deep": "25–45"}[state["depth"]]) + packet,
-                             schema=REPORT_SCHEMA, model=model, effort=effort, cancel=cancel, log=logger("write"),
-                             timeout=1800, label=who)
-            spend(result)
+            result = ask_checked(provider,
+                                 prompt=INSTRUCTIONS.format(label=topic["label"], focus=topic["focus"],
+                                                            n_products={"quick": "12–20", "standard": "18–30",
+                                                                        "deep": "25–45"}[state["depth"]]) + packet,
+                                 schema=REPORT_SCHEMA, model=model, effort=effort, cancel=cancel, log=logger("write"),
+                                 timeout=1800, label=who, spend=spend, lock=lock,
+                                 empty=lambda data: not data.get("products"))
             guide = result["data"]
             final_model = result["model"]
         except llm.LimitError as error:

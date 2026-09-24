@@ -330,11 +330,20 @@ def _ask(provider: str, *, system: str, prompt: str, schema: dict[str, Any], mod
             stdin = ("Do not run commands or read files: everything you need is below. "
                      "Answer only with the JSON the schema asks for.\n\n" + system + "\n\n" + prompt)
         elif provider == "grok":
+            # The prompt file lives outside Grok's working folder, and every
+            # tool is removed. With tools, Grok re-read its own prompt file in
+            # pieces instead of answering, and on big prompts gave up part-way.
+            # `--tools ""` does NOT remove them; an allowlist of one tool that
+            # is then denied does, plus the `search_tool` meta-tool that can
+            # load others back in (checked in ~/.grok/logs: tool_count 1, the
+            # structured-output one).
             (work_path / "prompt.md").write_text(prompt, encoding="utf-8")
+            (work_path / "cwd").mkdir()
             args = [path, "--prompt-file", str(work_path / "prompt.md"), "--json-schema", json.dumps(schema),
-                    "--output-format", "json", "--cwd", work, "--system-prompt-override", system,
-                    "--tools", "", "--disable-web-search", "--no-subagents", "--no-plan",
-                    "--permission-mode", "dontAsk", "--max-turns", "4"]
+                    "--output-format", "json", "--cwd", str(work_path / "cwd"), "--system-prompt-override", system,
+                    "--tools", "todo_write", "--disallowed-tools", "todo_write,search_tool,Agent",
+                    "--disable-web-search", "--no-subagents", "--no-plan",
+                    "--permission-mode", "dontAsk", "--max-turns", "2"]
             if model:
                 args += ["-m", model]
             if effort:
@@ -347,7 +356,7 @@ def _ask(provider: str, *, system: str, prompt: str, schema: dict[str, Any], mod
             if provider == "grok":
                 # Grok keeps a transcript per working directory and has no switch
                 # to skip it. This one was our throwaway folder: remove it.
-                shutil.rmtree(Path.home() / ".grok" / "sessions" / urllib.parse.quote(work, safe=""),
+                shutil.rmtree(Path.home() / ".grok" / "sessions" / urllib.parse.quote(str(work_path / "cwd"), safe=""),
                               ignore_errors=True)
 
         if provider == "claude":
@@ -396,6 +405,21 @@ def _ask(provider: str, *, system: str, prompt: str, schema: dict[str, Any], mod
         return {"data": data, "model": model or "codex default", "cost": None, "tokens": tokens, "seconds": seconds}
 
 
+def first_json_object(text: str) -> dict[str, Any] | None:
+    """The first complete JSON object in `text`. Grok sometimes repeats its
+    answer back to back ("{…}{…}"), which plain json.loads rejects."""
+    decoder = json.JSONDecoder()
+    start = text.find("{")
+    while start != -1:
+        try:
+            value, _end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            start = text.find("{", start + 1)
+            continue
+        return value if isinstance(value, dict) else None
+    return None
+
+
 def _grok_result(raw: str, stderr: str, model: str, seconds: int) -> dict[str, Any]:
     """Grok's --output-format json envelope. Read defensively: take the
     structured field if there is one, else parse the final text as JSON."""
@@ -414,10 +438,9 @@ def _grok_result(raw: str, stderr: str, model: str, seconds: int) -> dict[str, A
             data = text
         elif isinstance(text, str):
             cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
-            try:
-                data = json.loads(cleaned)
-            except json.JSONDecodeError as error:
-                raise ModelError(f"Grok's answer wasn't the JSON asked for: {cleaned[:200]}") from error
+            data = first_json_object(cleaned)
+            if data is None:
+                raise ModelError(f"Grok's answer wasn't the JSON asked for: {cleaned[:200]}")
     if not isinstance(data, dict):
         # The envelope itself may be the answer when --json-schema is set.
         if {"headline", "products"} <= set(envelope) or {"products", "brands"} <= set(envelope):

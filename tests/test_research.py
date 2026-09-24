@@ -190,6 +190,31 @@ class GrokTest(unittest.TestCase):
         with self.assertRaises(llm.ModelError):
             llm._grok_result(json.dumps({"text": "sorry"}), "", "", 1)
 
+    def test_doubled_json_is_read(self) -> None:
+        import llm
+        raw = json.dumps({"text": '{"products":[],"tips":["a"]}{"products":[],"tips":["a"]}'})
+        self.assertEqual(llm._grok_result(raw, "", "", 1)["data"], {"products": [], "tips": ["a"]})
+
+    def test_grok_gets_no_tools_and_cannot_see_its_prompt_file(self) -> None:
+        import llm
+        seen = {}
+
+        def fake_run(args, stdin, cwd, path, cancel, log, timeout, label):
+            seen["args"] = args
+            prompt_file = Path(args[args.index("--prompt-file") + 1])
+            workdir = Path(args[args.index("--cwd") + 1])
+            seen["outside"] = workdir not in prompt_file.parents
+            seen["cwd_empty"] = not any(workdir.iterdir())
+            return json.dumps({"structuredOutput": {"ok": True}}), "", 1
+
+        with mock.patch.object(llm, "binary", return_value="/bin/true"), mock.patch.object(llm, "_run", fake_run):
+            llm.ask("grok", system="s", prompt="p", schema={"type": "object"})
+        args = seen["args"]
+        self.assertEqual(args[args.index("--tools") + 1], "todo_write")
+        self.assertIn("search_tool", args[args.index("--disallowed-tools") + 1])
+        self.assertTrue(seen["outside"])
+        self.assertTrue(seen["cwd_empty"])
+
     def test_thinking_levels_by_version(self) -> None:
         import llm
         self.assertIn("xhigh", llm._grok_efforts("grok-4.7-build-fast"))
@@ -336,6 +361,55 @@ class PauseTest(unittest.TestCase):
             research.DEPTHS["deep"]["parallel"] = saved_parallel
         saved = research.read_checkpoint(self.out, state["id"])
         self.assertEqual((saved["status"], sorted(saved["notes"])), ("stopped", ["1"]))
+
+    def test_empty_guide_is_retried_then_refused(self) -> None:
+        import llm
+        calls = []
+
+        def empty_guide(provider, *, prompt, schema, **_):
+            calls.append("retry" if "Your previous answer was empty" in prompt else "first")
+            data = json.loads(json.dumps(GUIDE))
+            data["products"] = []
+            data["headline"] = "Reading the rest of the packet"
+            return {"data": data, "model": "m", "cost": None, "tokens": {}, "seconds": 1}
+
+        with mock.patch.object(llm, "ask", empty_guide):
+            path = research.write(fake_state(), provider="grok", out_dir=self.out)
+        document = json.loads(path.read_text())
+        self.assertEqual(calls, ["first", "retry"])
+        self.assertEqual(document["writer"]["by"], "counts")
+        self.assertIn("empty answer twice", document["writer"]["note"])
+
+    def test_placeholder_then_real_guide_is_accepted(self) -> None:
+        import llm
+        answers = iter([dict(GUIDE, products=[]), GUIDE])
+
+        def ask(provider, **_):
+            return {"data": json.loads(json.dumps(next(answers))), "model": "m", "cost": None, "tokens": {}, "seconds": 1}
+
+        with mock.patch.object(llm, "ask", ask):
+            path = research.write(fake_state(), provider="claude", out_dir=self.out)
+        self.assertEqual(len(json.loads(path.read_text())["guide"]["products"]), 1)
+
+    def test_empty_notes_on_a_busy_part_are_retried(self) -> None:
+        import llm
+        state = fake_state(1)
+        state["batches"][0]["comments"] = 40
+        seen = []
+
+        def ask(provider, *, prompt, schema, **_):
+            final = schema is research.REPORT_SCHEMA
+            seen.append("final" if final else ("retry" if "previous answer was empty" in prompt else "part"))
+            if final:
+                return {"data": json.loads(json.dumps(GUIDE)), "model": "m", "cost": None, "tokens": {}, "seconds": 1}
+            empty = seen.count("part") == 1 and seen[-1] == "part"
+            notes = {"products": [] if empty else [{"brand": "B", "name": "N"}], "brands": [], "trends": [],
+                     "warnings": [], "questions": [], "tips": []}
+            return {"data": notes, "model": "m", "cost": None, "tokens": {}, "seconds": 1}
+
+        with mock.patch.object(llm, "ask", ask):
+            research.write(state, provider="claude", out_dir=self.out)
+        self.assertEqual(seen, ["part", "retry", "final"])
 
     def test_checkpoint_names_are_checked(self) -> None:
         self.assertIsNone(research.read_checkpoint(self.out, "../../etc/passwd"))
