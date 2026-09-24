@@ -66,11 +66,18 @@ dependencies.
 - The server reads every post in r/TheOCS and r/CanadianCannabisLPs for that
   window, picks the relevant threads, reads their comments, and lines brands
   up against the full OCS catalog; a progress panel shows each stage
-- The model writes the guide: quick picks, trends, brand report cards, tiered rankings with pros,
+- The model writes the guide: quick picks (best overall, value, daytime,
+  night & sleep, flavour, strongest, solo sessions, beginners, skip), trends, brand report cards, tiered rankings with pros,
   cons and verdicts, things to skip, tips, glossary and FAQ. Every quote is
   checked word for word against the real comment and dropped if it isn't there
 - Without a model, a plainer guide is built from mention counts and tone
 - Every guide says how much was fetched and how much the model actually read
+- Product cards show indica / sativa / hybrid (from OCS), strength, best
+  time, what it's good for, what the high is like, hardware, value, all
+  terpenes and every size's price; filter by plant type, use, brand or solo
+  fit. Brand cards show OCS counts and prices, trend, tone and best pick.
+  "What's changing" adds counted risers and fallers and what's new on OCS.
+  Privacy mode hides everything to do with solo sessions
 - If the writer hits its plan's usage limit, the run **pauses** instead of
   failing: everything gathered and every part already read is saved, and
   the tab offers **Continue** (same writer, once the limit resets — the

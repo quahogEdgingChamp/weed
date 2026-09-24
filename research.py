@@ -904,20 +904,29 @@ def obj(props: dict[str, Any]) -> dict[str, Any]:
     return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
 
+GOOD_FOR = ["daytime", "night", "sleep", "focus", "creative", "social", "relax", "body", "solo", "beginners", "heavy"]
+
 REPORT_SCHEMA = obj({
     "headline": STR,
     "lede": STR,
     "quick_picks": {"type": "array", "items": obj({"label": STR, "pick": STR, "product": STR, "why": STR})},
     "trends": {"type": "array", "items": obj({
         "title": STR, "direction": {"type": "string", "enum": ["rising", "falling", "new", "steady", "warning"]},
-        "detail": STR, "threads": STRS})},
+        "detail": STR, "means": STR, "when": STR, "brands": STRS, "threads": STRS})},
     "brands": {"type": "array", "items": obj({
         "brand": STR, "tier": TIER, "trend": {"type": "string", "enum": ["rising", "falling", "steady", "new"]},
+        "known_for": STR, "best_pick": STR,
+        "consistency": {"type": "string", "enum": ["consistent", "mixed", "inconsistent", "unknown"]},
         "strengths": STR, "weaknesses": STR, "price": STR, "summary": STR})},
     "products": {"type": "array", "items": obj({
         "id": STR, "ref": STR, "brand": STR, "name": STR, "kind": STR, "tier": TIER,
         "score": {"type": "number"}, "lean": {"type": "string", "enum": ["indica", "sativa", "hybrid", "balanced", "unknown"]},
-        "flavour": STR, "effects": STR, "verdict": STR, "pros": STRS, "cons": STRS,
+        "strength": {"type": "string", "enum": ["mild", "medium", "strong", "very strong", "unknown"]},
+        "best_time": {"type": "string", "enum": ["day", "evening", "night", "any", "unknown"]},
+        "good_for": {"type": "array", "items": {"type": "string", "enum": GOOD_FOR}},
+        "high": STR, "flavour": STR, "effects": STR, "hardware": STR, "value": STR,
+        "solo": obj({"fit": {"type": "string", "enum": ["great", "good", "mixed", "poor", "unknown"]}, "why": STR}),
+        "verdict": STR, "pros": STRS, "cons": STRS,
         "quotes": {"type": "array", "items": obj({"text": STR, "thread": STR, "comment": STR})},
         "threads": STRS})},
     "avoid": {"type": "array", "items": obj({"name": STR, "reason": STR, "threads": STRS})},
@@ -925,6 +934,15 @@ REPORT_SCHEMA = obj({
     "glossary": {"type": "array", "items": obj({"term": STR, "definition": STR})},
     "faq": {"type": "array", "items": obj({"q": STR, "a": STR})},
 })
+
+# What "solo" means, for the model. The page itself only ever says
+# "Solo sessions" and uses neutral wording.
+SOLO_GUIDE = """how well it suits long solo sessions of self-pleasure. Good signs in what people report: a warm, \
+tingly body high, heightened physical sensation or touch, a lift in mood or libido, staying present and clear \
+rather than sleepy, and effects that last. Bad signs: anxiety, racing or paranoid thoughts, heavy couch-lock or \
+sleepiness, a short or flat high. People rarely say this outright: infer it from reported effects, and say "unknown" \
+when the threads give no signal. Write `why` in one discreet, neutral line (e.g. "strong body buzz and heightened \
+sensation while staying clear-headed"), never explicit"""
 
 SYSTEM_PROMPT = """You are a meticulous cannabis market analyst writing a buyer's guide for adults in Ontario, Canada, \
 who buy from the Ontario Cannabis Store (OCS) and licensed retailers. Your only evidence is the packet the user gives you: \
@@ -938,7 +956,12 @@ What the reader cares about most here: {focus}.
 Rules:
 - Base every claim on the packet. Where the community disagrees, say so. Where evidence is thin, say that too.
 - products: the {n_products} products (or product lines) the threads discuss most usefully, best first. Only include a \
-product if at least one thread discusses it specifically. `ref` is the OCS catalog ref (the handle in the first column) \
+product if at least one thread discusses it specifically. For each: `high` is one or two sentences on what the high is \
+like (head vs body, energy, onset and how long it lasts) as people describe it; `strength` how hard it hits; \
+`best_time` when people use it; `good_for` the uses the evidence supports (from: daytime, night, sleep, focus, \
+creative, social, relax, body, solo, beginners, heavy); `hardware` a short note on the cartridge/device for vapes, else \
+""; `value` one short line on price vs quality. `solo` is {solo}. Include "solo" in `good_for` only for \
+fit "great" or "good". `ref` is the OCS catalog ref (the handle in the first column) \
 when you can match it confidently, else "". `id` is a short kebab-case slug. `kind` is a short type label such as \
 "live resin cart" or "hash rosin". `score` is 0–10 and must agree with `tier` (S ≥ 9, A 8–8.9, B 6.5–7.9, C 5–6.4, \
 AVOID < 5). `verdict` is 2–3 sentences. 2–5 pros and 1–5 cons, each short. `lean` only from what people report.
@@ -946,11 +969,17 @@ AVOID < 5). `verdict` is 2–3 sentences. 2–5 pros and 1–5 cons, each short.
 you may cut the start or end of a sentence but never change words inside it. `thread` is the t: id, `comment` the c: id \
 ("" when quoting the post itself). Quotes that are not verbatim are deleted automatically, so copy exactly.
 - threads: t: ids that support the item.
-- brands: 5–14 brand report cards for the brands that matter in this category, strongest first.
-- trends: 4–8 things that changed or are changing (new launches, hardware changes, price moves, quality drops, \
-shortages, what is being hyped). Use `warning` for recurring quality or safety complaints.
-- quick_picks: 4–7 "if you want X, buy Y" answers (best overall, best value, best for flavour, for night, for day, \
-what to skip...). `product` is the product `id` it points to, or "".
+- brands: 5–14 brand report cards for the brands that matter in this category, strongest first. `known_for` is one \
+line on what the brand is known for; `best_pick` its best product in this category (name as in products); \
+`consistency` how consistent batches/units are reported to be.
+- trends: 5–10 things that changed or are changing (new launches, hardware changes, price moves, quality drops, \
+shortages, what is being hyped, what is falling out of favour). `detail` 2–3 sentences with specifics; `means` one \
+line on what it means for a buyer; `when` roughly when it started ("since spring 2026", "last 2 months"); `brands` \
+the brands involved. Use `warning` for recurring quality or safety complaints.
+- quick_picks: 8–10 "if you want X, buy Y" answers, using these labels where the evidence supports one: "Best \
+overall", "Best value", "Best for daytime", "Best for night & sleep", "Best flavour", "Strongest", "Solo sessions", \
+"Best for beginners", and "Skip" (what to avoid). `product` is the product `id` it points to, or "". For "Solo \
+sessions" pick the product with the best `solo` fit and keep `why` discreet.
 - avoid: products or practices the community warns about, with the reason.
 - tips: 3–6 practical tips (how to use, store, choose, what to check on the package).
 - glossary: 4–10 terms a newcomer to this category would trip on.
@@ -970,6 +999,7 @@ NOTES_SCHEMA = obj({
         "brand": STR, "name": STR, "ref": STR, "kind": STR,
         "tone": {"type": "string", "enum": ["positive", "negative", "mixed"]},
         "people": {"type": "number"},
+        "effects": STR, "solo_signals": STR,
         "points": STRS,
         "quotes": {"type": "array", "items": obj({"text": STR, "thread": STR, "comment": STR})},
         "threads": STRS})},
@@ -985,7 +1015,9 @@ Take careful notes as JSON matching the schema. Another pass will combine the no
 
 - products: every specific product or product line these threads discuss with any substance, even briefly. \
 `ref` is the OCS catalog ref (first column of the catalog table) when you can match it confidently, else "". \
-`people` is roughly how many different commenters here weighed in on it. `points` are short, specific claims \
+`people` is roughly how many different commenters here weighed in on it. `effects` is what people say the high is \
+like (head/body, energy, sleepiness, anxiety, onset and duration), "" if nobody says. `solo_signals` notes anything \
+that bears on {solo} — "" if nothing. `points` are short, specific claims \
 people make (flavour, effect, hardware, clogging, price, batch problems, comparisons), each under 200 characters, \
 written as what people report, not as fact. Keep disagreement: "most say X; two say Y".
 - quotes: up to 4 per product, copied VERBATIM from a comment (or the thread's own text), at most 280 characters. \
@@ -1000,6 +1032,8 @@ the c: id ("" for the post itself). Quotes that aren't verbatim are deleted auto
 
 """
 
+INSTRUCTIONS = INSTRUCTIONS.replace("{solo}", SOLO_GUIDE)
+
 REDUCE_NOTE = """The evidence below is not the raw threads: it is notes another careful reader took on all {threads} threads \
 ({comments} comments) in {parts} parts. Quotes inside the notes were copied verbatim from comments; reuse them \
 exactly as written, with their thread and comment ids. Weigh products by how many parts and people mention them.
@@ -1007,14 +1041,25 @@ exactly as written, with their thread and comment ids. Weigh products by how man
 """
 
 
-def notes_text(index: int, notes: dict[str, Any]) -> str:
-    """Notes from one batch, in a compact form for the final pass."""
+def notes_text(index: int, notes: dict[str, Any], compact: bool = False) -> str:
+    """Notes from one batch, in a compact form for the final pass.
+
+    `compact` caps what each product carries, for writers with a small
+    prompt limit (Grok): 3 points, 2 quotes, 4 thread ids.
+    """
+    points_cap, quotes_cap, threads_cap = (3, 2, 4) if compact else (None, None, 8)
     lines = [f"## Notes from part {index}"]
     for item in notes.get("products", []):
         lines.append(f"- PRODUCT {item.get('brand')} | {item.get('name')} | ref {item.get('ref') or '-'} | "
-                     f"{item.get('kind')} | tone {item.get('tone')} | ~{item.get('people')} people | threads {', '.join(item.get('threads', [])[:8])}")
-        lines += [f"    · {point}" for point in item.get("points", [])]
-        lines += [f"    “{q.get('text')}” [t:{q.get('thread')} c:{q.get('comment')}]" for q in item.get("quotes", [])]
+                     f"{item.get('kind')} | tone {item.get('tone')} | ~{item.get('people')} people | "
+                     f"threads {', '.join(item.get('threads', [])[:threads_cap])}")
+        if item.get("effects"):
+            lines.append(f"    effects: {clean_text(item['effects'], 220) if compact else item['effects']}")
+        if item.get("solo_signals"):
+            lines.append(f"    solo: {clean_text(item['solo_signals'], 160) if compact else item['solo_signals']}")
+        lines += [f"    · {clean_text(point, 180) if compact else point}" for point in item.get("points", [])[:points_cap]]
+        lines += [f"    “{q.get('text')}” [t:{q.get('thread')} c:{q.get('comment')}]"
+                  for q in item.get("quotes", [])[:quotes_cap]]
     for item in notes.get("brands", []):
         lines.append(f"- BRAND {item.get('brand')}: " + " · ".join(item.get("points", [])) + f" [{', '.join(item.get('threads', [])[:6])}]")
     for key, tag in (("trends", "TREND"), ("warnings", "WARNING")):
@@ -1088,8 +1133,8 @@ def heuristic_report(topic: dict[str, Any], analysis: dict[str, Any], catalog_ro
         tier = tier_for(score)
         tone = "mostly positive" if row["sentiment"] > 0.25 else "mostly negative" if row["sentiment"] < -0.25 else "mixed"
         summary = f"Mentioned {row['mentions']} times across {row['threads']} threads; tone {tone}."
-        brands.append({"brand": row["brand"], "tier": tier, "trend": row["trend"], "strengths": "", "weaknesses": "",
-                       "price": "", "summary": summary})
+        brands.append({"brand": row["brand"], "tier": tier, "trend": row["trend"], "known_for": "", "best_pick": "",
+                       "consistency": "unknown", "strengths": "", "weaknesses": "", "price": "", "summary": summary})
         options = sorted(by_brand.get(row["key"], []), key=lambda r: (not r["online"], r["price"] or 999))
         ref = options[0] if options else None
         products.append({
@@ -1101,6 +1146,13 @@ def heuristic_report(topic: dict[str, Any], analysis: dict[str, Any], catalog_ro
             "tier": tier,
             "score": score,
             "lean": "unknown",
+            "strength": "unknown",
+            "best_time": "unknown",
+            "good_for": [],
+            "high": "",
+            "hardware": "",
+            "value": "",
+            "solo": {"fit": "unknown", "why": ""},
             "flavour": "",
             "effects": "",
             "verdict": f"{summary} Counted automatically; read the quotes before trusting the tier.",
@@ -1113,11 +1165,13 @@ def heuristic_report(topic: dict[str, Any], analysis: dict[str, Any], catalog_ro
     falling = [r["brand"] for r in analysis["brands"] if r["inTopic"] and r["trend"] == "falling"][:5]
     trends = []
     if rising:
-        trends.append({"title": "Talked about more lately", "direction": "rising",
-                       "detail": ", ".join(rising) + " got more mentions in the last 90 days than before.", "threads": []})
+        trends.append({"title": "Talked about more lately", "direction": "rising", "means": "", "when": "last 90 days",
+                       "detail": ", ".join(rising) + " got more mentions in the last 90 days than before.",
+                       "brands": rising, "threads": []})
     if falling:
-        trends.append({"title": "Talked about less", "direction": "falling",
-                       "detail": ", ".join(falling) + " came up less in the last 90 days.", "threads": []})
+        trends.append({"title": "Talked about less", "direction": "falling", "means": "", "when": "last 90 days",
+                       "detail": ", ".join(falling) + " came up less in the last 90 days.",
+                       "brands": falling, "threads": []})
 
     top = products[0]["name"] if products else "nothing yet"
     return {
@@ -1371,6 +1425,107 @@ def gather(topic_key: str, query: str = "", *, depth: str = "quick", subreddits:
     return state
 
 
+NOTES_INSTRUCTIONS = NOTES_INSTRUCTIONS.replace("{solo}", SOLO_GUIDE)
+
+TIGHT_NOTES = """- Keep it tight: at most 15 products, 3 points and 2 quotes each.
+
+"""
+
+MERGE_INSTRUCTIONS = """Below are notes that careful readers took on parts of the Reddit evidence for a buyer's guide on "{label}".
+Merge them into ONE set of notes as JSON matching the schema:
+- Combine duplicates (the same product or brand from different parts) into one item; add up `people`; keep every thread id.
+- Keep disagreements ("most say X; a few say Y"). Drop only weak, one-off items.
+- At most 20 products, 3 points and 2 quotes each. Quotes must stay exactly as written, with their t: and c: ids.
+- Don't add anything that isn't in the notes.
+
+"""
+
+
+def nbytes(text: str) -> int:
+    return len(text.encode("utf-8"))
+
+
+def compact_head(state: dict[str, Any], rows: int) -> str:
+    """The catalog header cut down for a small-prompt writer: the most-discussed
+    brands' products, ref | brand | product | price, and the brand counts."""
+    analysis = state["analysis"]
+    talked = {row["key"]: row["mentions"] for row in analysis["brands"]}
+    listed = sorted(state["topicRows"], key=lambda r: (-talked.get(brand_key(r["brand"]), 0), not r["available"]))[:rows]
+    listed.sort(key=lambda r: (r["brand"].lower(), r["title"].lower()))
+    lines = [f"# Topic: {state['topic']['label']}", "",
+             f"## OCS catalog, most-discussed brands ({len(listed)} of {len(state['topicRows'])})",
+             "ref | brand | product | price / size"]
+    for row in listed:
+        price = f"${row['price']:.2f} / {row['size']}" if row.get("price") is not None else "?"
+        lines.append(f"{row['handle']} | {row['brand']} | {row['title']} | {price}")
+    lines += ["", "## Brand mentions (mentions, threads, last-90-days, tone -1..1)"]
+    for row in analysis["brands"][:25]:
+        lines.append(f"{row['brand']}: {row['mentions']}, {row['threads']}, {row['recent']}, {row['sentiment']:+.2f}")
+    return "\n".join(lines) + "\n"
+
+
+def split_blocks(text: str) -> list[str]:
+    """Thread blocks back out of a packet or a part ("### [t:…" each)."""
+    return [block for block in re.split(r"(?m)^(?=### \[t:)", text) if block.startswith("### [t:")]
+
+
+def cut_blocks(blocks: list[str], budget: int) -> list[dict[str, Any]]:
+    """Pack thread blocks into parts of at most `budget` bytes. A block that is
+    too big alone keeps its head and best comments (they're sorted by score)."""
+    parts: list[dict[str, Any]] = []
+    current: dict[str, Any] = {"text": [], "chars": 0, "threads": 0, "comments": 0}
+    for block in blocks:
+        if nbytes(block) > budget:
+            kept, size = [], 0
+            for line in block.splitlines(keepends=True):
+                if size + nbytes(line) > budget:
+                    break
+                kept.append(line)
+                size += nbytes(line)
+            block = "".join(kept)
+        size = nbytes(block)
+        if current["text"] and current["chars"] + size > budget:
+            parts.append(current)
+            current = {"text": [], "chars": 0, "threads": 0, "comments": 0}
+        current["text"].append(block)
+        current["chars"] += size
+        current["threads"] += 1
+        current["comments"] += sum(1 for line in block.splitlines() if line.startswith("- [c:"))
+    if current["text"]:
+        parts.append(current)
+    for part in parts:
+        part["text"] = "".join(part["text"])
+    return parts
+
+
+def fit_for_limit(state: dict[str, Any], limit: int, report: Callable[..., None], who: str) -> None:
+    """Re-cut the evidence so every prompt fits a writer with a prompt limit.
+
+    One-pass runs become parts; parts that are too big (cut for another
+    writer, or by an older version) are re-cut. Parts already read are kept.
+    """
+    state["slimHead"] = compact_head(state, rows=80)
+    budget = limit - nbytes(NOTES_INSTRUCTIONS) - nbytes(TIGHT_NOTES) - nbytes(state["slimHead"]) - 3000
+    if state["mode"] == "single":
+        blocks = split_blocks(state["packet"])
+        state["batches"] = cut_blocks(blocks, budget)
+        state["mode"] = "batches"
+        report("write", f"{who} can only read about {limit // 1000} KB at once, so the {len(blocks)} threads "
+                        f"are split into {len(state['batches'])} parts")
+        return
+    notes, batches = state["notes"], state["batches"]
+    unread = [b for i, b in enumerate(batches, 1) if str(i) not in notes]
+    if all(nbytes(b["text"]) <= budget for b in unread):
+        return
+    read = sorted((int(i) for i in notes), key=int)
+    kept = [batches[i - 1] for i in read]
+    recut = cut_blocks([block for b in unread for block in split_blocks(b["text"])], budget)
+    state["batches"] = kept + recut
+    state["notes"] = {str(k): notes[str(old)] for k, old in enumerate(read, 1)}
+    state["skipped"] = []
+    report("write", f"Re-cut the unread evidence into {len(recut)} smaller parts for {who}")
+
+
 RETRY_NOTE = """
 
 IMPORTANT: everything you need is in this message; nothing more is coming and there is nothing to look up.
@@ -1402,6 +1557,54 @@ def ask_checked(provider: str, *, prompt: str, schema: dict[str, Any], model: st
     raise llm.ModelError(f"{label} gave an empty answer twice")
 
 
+def merge_notes(texts: list[str], *, limit: int, budget: int, provider: str, model: str, effort: str,
+                topic: dict[str, Any], part_head: str, cancel: threading.Event | None,
+                logger: Callable[[str], Callable[[str], None]], report: Callable[..., None],
+                spend: Callable[[dict[str, Any]], None], lock: threading.Lock, who: str,
+                parallel: int) -> list[str]:
+    """Condense notes in rounds until they fit one prompt of `budget` bytes."""
+    group_budget = limit - nbytes(MERGE_INSTRUCTIONS) - nbytes(part_head) - 3000
+    for round_no in range(1, 5):
+        if sum(nbytes(t) for t in texts) <= budget:
+            return texts
+        # Pack notes into groups; one set of notes too big alone is shortened.
+        groups: list[list[str]] = [[]]
+        for text in texts:
+            if nbytes(text) > group_budget:
+                text = text.encode("utf-8")[:group_budget].decode("utf-8", "ignore")
+            if groups[-1] and sum(nbytes(t) for t in groups[-1]) + nbytes(text) > group_budget:
+                groups.append([])
+            groups[-1].append(text)
+        report("write", f"The notes are too long for one {who} prompt; condensing them "
+                        f"(round {round_no}: {len(texts)} → {len(groups)})")
+
+        def merge(index: int, group: list[str]) -> str:
+            prompt = MERGE_INSTRUCTIONS.format(label=topic["label"]) + part_head + "\n" + "\n".join(group)
+            result = ask_checked(provider, prompt=prompt, schema=NOTES_SCHEMA, model=model, effort=effort,
+                                 cancel=cancel, log=logger("write"), timeout=1500,
+                                 label=f"{who} (condensing {index})", spend=spend, lock=lock, empty=notes_empty)
+            return notes_text(index, result["data"], compact=True)
+
+        with ThreadPoolExecutor(max_workers=parallel) as pool:
+            texts = list(pool.map(lambda pair: merge(*pair), enumerate(groups, 1)))
+    if sum(nbytes(t) for t in texts) > budget:
+        raise llm.ModelError("the notes stayed too long to fit one prompt after 4 rounds of condensing")
+    return texts
+
+
+def new_on_ocs(state: dict[str, Any], days: int = 90) -> list[dict[str, Any]]:
+    """Products OCS started listing in the last `days`, newest first, with
+    whether people are talking about the brand yet."""
+    cutoff = datetime.fromtimestamp(state["started"] - days * 86400, timezone.utc).strftime("%Y-%m-%d")
+    talked = {row["key"]: row["mentions"] for row in state["analysis"]["brands"]}
+    rows = [row for row in state["topicRows"] if (row.get("created") or "") >= cutoff]
+    rows.sort(key=lambda r: r.get("created") or "", reverse=True)
+    return [{"handle": r["handle"], "title": r["title"], "brand": r["brand"], "created": r.get("created"),
+             "price": r.get("price"), "size": r.get("size"), "plant": r.get("plant"), "thcMin": r.get("thcMin"),
+             "thcMax": r.get("thcMax"), "online": r.get("online"), "url": r.get("url"),
+             "mentions": talked.get(brand_key(r["brand"]), 0)} for r in rows[:24]]
+
+
 def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str = "", out_dir: Path,
           progress: Callable[..., None] | None = None, cancel: threading.Event | None = None) -> Path:
     """Stage 5: the model calls, then the saved guide.
@@ -1415,7 +1618,10 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
     topic = state["topic"]
     writing_started = time.time()
     who = llm.LABELS.get(provider, "")
-    who_full = f"{who} ({model})" if model else who
+    limit = llm.PROMPT_LIMITS.get(provider)
+    if limit:
+        fit_for_limit(state, limit, report, who)
+    part_head = state["slimHead"] if limit else state["head"]
     batches = state["batches"]
     notes: dict[str, Any] = state["notes"]
     usage = state["usage"]
@@ -1448,7 +1654,8 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
 
                 def read_part(index: int) -> None:
                     prompt = (NOTES_INSTRUCTIONS.format(part=index, parts=len(batches), label=topic["label"])
-                              + state["head"] + "\n## Threads in this part\n\n" + batches[index - 1]["text"])
+                              + (TIGHT_NOTES if limit else "") + part_head
+                              + "\n## Threads in this part\n\n" + batches[index - 1]["text"])
                     result = ask_checked(provider, prompt=prompt, schema=NOTES_SCHEMA, model=model, effort=effort,
                                          cancel=cancel, log=logger("write"), timeout=1500,
                                          label=f"{who} (part {index})", spend=spend, lock=lock,
@@ -1486,8 +1693,16 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
                 threads_read = min(state["counts"]["threadsFetched"],
                                    sum(batches[int(i) - 1]["threads"] for i, _ in ordered))
                 comments_read = sum(batches[int(i) - 1]["comments"] for i, _ in ordered)
+                texts = [notes_text(int(i), n["data"], compact=bool(limit)) for i, n in ordered]
+                final_head = state["head"]
+                if limit:
+                    final_head = compact_head(state, rows=150)
+                    texts = merge_notes(texts, limit=limit, budget=limit - nbytes(INSTRUCTIONS) - nbytes(REDUCE_NOTE)
+                                        - nbytes(final_head) - 3000, provider=provider, model=model, effort=effort,
+                                        topic=topic, part_head=part_head, cancel=cancel, logger=logger, report=report,
+                                        spend=spend, lock=lock, who=who, parallel=settings.get("parallel", 3))
                 packet = (REDUCE_NOTE.format(threads=threads_read, comments=comments_read, parts=len(ordered))
-                          + state["head"] + "\n" + "\n".join(notes_text(int(i), n["data"]) for i, n in ordered))
+                          + final_head + "\n" + "\n".join(texts))
                 report("write", f"{who} is writing the guide from {len(ordered)} parts of notes "
                                 f"({len(packet) // 1000}k characters)")
             else:
@@ -1585,6 +1800,7 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
             "brands": [{k: v for k, v in row.items() if k != "quotes"} for row in state["analysis"]["brands"][:30]],
         },
         "catalog": [public_row(row) for row in state["topicRows"]],
+        "newOnOcs": new_on_ocs(state),
         "threads": {
             tid: {
                 "title": clean_text(meta[tid].get("title"), 200),

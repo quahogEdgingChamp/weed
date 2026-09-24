@@ -32,6 +32,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 PROVIDERS = ("claude", "codex", "grok")
+
+# Grok Build keeps only the start and end of a prompt file above ~100 KB and
+# leaves the middle for its tools to read (measured: 90 KB whole, 120 KB cut,
+# and on a cut prompt it invented the missing part). Research keeps every
+# Grok prompt under this many UTF-8 bytes; `ask` refuses anything bigger.
+PROMPT_LIMITS = {"grok": 80_000}
 LABELS = {"claude": "Claude", "codex": "Codex", "grok": "Grok"}
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,79}")
 EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max", "ultra")
@@ -302,6 +308,11 @@ def ask(provider: str, *, system: str, prompt: str, schema: dict[str, Any], mode
 
 def _ask(provider: str, *, system: str, prompt: str, schema: dict[str, Any], model: str, effort: str,
          cancel: threading.Event | None, log: Callable[[str], None], timeout: int, label: str) -> dict[str, Any]:
+    limit = PROMPT_LIMITS.get(provider)
+    size = len(prompt.encode("utf-8"))
+    if limit and size > limit:
+        raise ModelError(f"{LABELS[provider]} would silently drop the middle of a {size // 1000} KB prompt "
+                         f"(limit {limit // 1000} KB); not sent")
     path = binary(provider)
     if not path:
         raise ModelError(f"the {provider} CLI is not installed")

@@ -374,7 +374,7 @@ class PauseTest(unittest.TestCase):
             return {"data": data, "model": "m", "cost": None, "tokens": {}, "seconds": 1}
 
         with mock.patch.object(llm, "ask", empty_guide):
-            path = research.write(fake_state(), provider="grok", out_dir=self.out)
+            path = research.write(fake_state(), provider="claude", out_dir=self.out)
         document = json.loads(path.read_text())
         self.assertEqual(calls, ["first", "retry"])
         self.assertEqual(document["writer"]["by"], "counts")
@@ -410,6 +410,69 @@ class PauseTest(unittest.TestCase):
         with mock.patch.object(llm, "ask", ask):
             research.write(state, provider="claude", out_dir=self.out)
         self.assertEqual(seen, ["part", "retry", "final"])
+
+    def big_state(self, threads: int, comment_bytes: int, mode: str) -> dict:
+        state = fake_state()
+        blocks = [f"### [t:t{i}] thread {i}\n" + "".join(f"- [c:c{i}x{j} 3↑] {'word ' * (comment_bytes // 5)}\n"
+                                                        for j in range(10)) for i in range(threads)]
+        state["corpus"] = {}
+        if mode == "single":
+            state.update(mode="single", packet="# header\n## Threads\n" + "".join(blocks))
+        else:
+            state.update(mode="batches", depth="deep", batches=research.cut_blocks(blocks, 200_000))
+        return state
+
+    def grok_fake(self, sizes: list, notes_bytes: int = 200):
+        import llm
+
+        def ask(provider, *, prompt, schema, **_):
+            size = len(prompt.encode())
+            self.assertLessEqual(size, llm.PROMPT_LIMITS["grok"], "a Grok prompt went over the limit")
+            sizes.append(size)
+            if schema is research.REPORT_SCHEMA:
+                return {"data": json.loads(json.dumps(GUIDE)), "model": "g", "cost": None, "tokens": {}, "seconds": 1}
+            product = {"brand": "B", "name": "N", "ref": "", "kind": "k", "tone": "positive", "people": 3,
+                       "points": ["p" * notes_bytes] * 3, "quotes": [], "threads": ["t1"]}
+            return {"data": {"products": [product] * 15, "brands": [], "trends": [], "warnings": [], "questions": [],
+                             "tips": []}, "model": "g", "cost": None, "tokens": {}, "seconds": 1}
+        return ask
+
+    def test_grok_one_pass_run_is_split_into_parts_that_fit(self) -> None:
+        import llm
+        sizes = []
+        with mock.patch.object(llm, "ask", self.grok_fake(sizes)):
+            path = research.write(self.big_state(40, 900, "single"), provider="grok", out_dir=self.out)
+        document = json.loads(path.read_text())
+        self.assertGreater(document["stats"]["parts"], 3)
+        self.assertEqual(document["stats"]["commentsRead"], 400)
+
+    def test_grok_recuts_big_parts_and_keeps_parts_already_read(self) -> None:
+        import llm
+        state = self.big_state(60, 900, "batches")
+        self.assertTrue(any(len(b["text"].encode()) > 80_000 for b in state["batches"]))
+        state["notes"] = {"1": {"data": {"products": [], "brands": [], "trends": [], "warnings": [], "questions": [],
+                                         "tips": ["kept"]}, "by": "Claude (m)"}}
+        first = state["batches"][0]["text"]
+        with mock.patch.object(llm, "ask", self.grok_fake([])):
+            research.write(state, provider="grok", out_dir=self.out)
+        self.assertEqual(state["batches"][0]["text"], first)
+        self.assertEqual(state["notes"]["1"]["by"], "Claude (m)")
+        self.assertTrue(all(len(b["text"].encode()) <= 80_000 for b in state["batches"][1:]))
+
+    def test_grok_notes_are_condensed_until_they_fit(self) -> None:
+        import llm
+        reports = []
+        with mock.patch.object(llm, "ask", self.grok_fake([], notes_bytes=170)):
+            research.write(self.big_state(120, 900, "single"), provider="grok", out_dir=self.out,
+                           progress=lambda stage, message, **_: reports.append(message))
+        self.assertTrue(any("condensing" in m for m in reports))
+
+    def test_oversized_grok_prompt_is_refused_not_sent(self) -> None:
+        import llm
+        with mock.patch.object(llm, "binary", return_value="/bin/true"), mock.patch.object(llm, "_run") as run:
+            with self.assertRaises(llm.ModelError):
+                llm.ask("grok", system="s", prompt="x" * 90_000, schema={"type": "object"})
+        run.assert_not_called()
 
     def test_checkpoint_names_are_checked(self) -> None:
         self.assertIsNone(research.read_checkpoint(self.out, "../../etc/passwd"))

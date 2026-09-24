@@ -58,7 +58,9 @@
     reportName: null,
     report: null,
     reportError: "",
-    filters: { q: "", tier: "", lean: "", sort: "score", online: false, cheap: false },
+    filters: { q: "", tier: "", lean: "", plant: "", use: "", brand: "", solo: false, sort: "score", online: false },
+    brandQuery: "",
+    brandSort: "tier",
     table: { key: "score", asc: false },
     resizeTimer: null,
     listView: "active",
@@ -860,7 +862,8 @@
     ui.reportName = name;
     ui.report = null;
     ui.reportError = "";
-    ui.filters = { q: "", tier: "", lean: "", sort: "score", online: false, cheap: false };
+    ui.filters = { q: "", tier: "", lean: "", plant: "", use: "", brand: "", solo: false, sort: "score", online: false };
+    ui.brandQuery = "";
     root.innerHTML = `<div class="rs-loading"><span class="spinner" aria-hidden="true"></span> Loading guide…</div>`;
     try {
       const { report } = await api(`${API}/reports/${encodeURIComponent(name)}`);
@@ -874,19 +877,94 @@
     }
   }
 
+  const GOOD_FOR = {
+    daytime: "Daytime",
+    night: "Night",
+    sleep: "Sleep",
+    focus: "Focus",
+    creative: "Creative",
+    social: "Social",
+    relax: "Unwind",
+    body: "Body high",
+    solo: "Solo sessions",
+    beginners: "Beginner-friendly",
+    heavy: "Heavy hitter",
+  };
+  const SOLO_FIT = { great: "Great", good: "Good", mixed: "Mixed", poor: "Poor", unknown: "Not enough to tell" };
+  const SOLO_RANK = { great: 0, good: 1, mixed: 2, unknown: 3, poor: 4 };
+  const TIME_LABEL = { day: "Daytime", evening: "Evening", night: "Night", any: "Any time" };
+  const NEW_DAYS = 90;
+
+  /* Indica / sativa / hybrid: OCS's label first ("Indica Dominant"), else what
+     people reported. */
+  function plantOf(p) {
+    const raw = String(p.ocs?.plant || "").toLowerCase();
+    if (raw.includes("indica")) return "indica";
+    if (raw.includes("sativa")) return "sativa";
+    if (raw.includes("hybrid")) return "hybrid";
+    if (raw.includes("blend")) return "blend";
+    return ["indica", "sativa", "hybrid", "balanced"].includes(p.lean) ? p.lean : "";
+  }
+
+  function plantBadge(kind, source) {
+    if (!kind) return "";
+    const label = { indica: "Indica", sativa: "Sativa", hybrid: "Hybrid", blend: "Blend", balanced: "Balanced" }[kind];
+    return `<span class="rs-plant rs-plant-${kind}" title="${esc(source || "")}">${label}${source && /dominant/i.test(source) ? "-dominant" : ""}</span>`;
+  }
+
+  function isNew(created, report) {
+    if (!created) return false;
+    const end = Date.parse(report.window?.to || report.createdAt || Date.now());
+    return end - Date.parse(created) <= NEW_DAYS * 86400000;
+  }
+
+  function soloBlock(p) {
+    const solo = p.solo;
+    if (!solo || !solo.fit || solo.fit === "unknown") return "";
+    return `<p class="rs-solo rs-solo-${esc(solo.fit)}"><span class="rs-solo-label">Solo sessions</span>
+      <span class="rs-solo-fit">${esc(SOLO_FIT[solo.fit] || solo.fit)}</span>${solo.why ? ` <span class="rs-solo-why">${esc(solo.why)}</span>` : ""}</p>`;
+  }
+
+  function goodForChips(p) {
+    return (p.good_for || [])
+      .filter((tag) => GOOD_FOR[tag])
+      .map((tag) => `<span class="rs-use${tag === "solo" ? " rs-solo" : ""}">${esc(GOOD_FOR[tag])}</span>`)
+      .join("");
+  }
+
   function prepare(report) {
     const guide = report.guide || {};
     const mentionByBrand = new Map();
     for (const row of report.mentions?.brands || []) mentionByBrand.set(brandKey(row.brand), row);
+    const catalogByBrand = new Map();
+    for (const row of report.catalog || []) {
+      const key = brandKey(row.brand);
+      if (!catalogByBrand.has(key)) catalogByBrand.set(key, []);
+      catalogByBrand.get(key).push(row);
+    }
     for (const p of guide.products || []) {
       p._ppg = perGram(p.ocs);
       p._thc = p.ocs && p.ocs.thcMax != null ? p.ocs.thcMax : -1;
       p._mention = mentionByBrand.get(brandKey(p.brand)) || null;
-      p._haystack = [p.brand, p.name, p.kind, p.flavour, p.effects, p.verdict, ...(p.pros || []), ...(p.cons || [])]
+      p._plant = plantOf(p);
+      p._new = isNew(p.ocs?.created, report);
+      p._haystack = [p.brand, p.name, p.kind, p.flavour, p.effects, p.high, p.verdict, p.hardware, p.ocs?.genetics,
+        ...(p.ocs?.terpenes || []), ...(p.pros || []), ...(p.cons || []), ...(p.good_for || []).map((t) => GOOD_FOR[t])]
         .join(" ")
         .toLowerCase();
     }
-    for (const b of guide.brands || []) b._mention = mentionByBrand.get(brandKey(b.brand)) || null;
+    for (const b of guide.brands || []) {
+      b._mention = mentionByBrand.get(brandKey(b.brand)) || null;
+      const rows = catalogByBrand.get(brandKey(b.brand)) || [];
+      const prices = rows.map((r) => r.price).filter((v) => typeof v === "number");
+      b._ocs = {
+        count: rows.length,
+        online: rows.filter((r) => r.online).length,
+        min: prices.length ? Math.min(...prices) : null,
+        max: prices.length ? Math.max(...prices) : null,
+      };
+      b._products = (guide.products || []).filter((p) => brandKey(p.brand) === brandKey(b.brand));
+    }
     report.threads = report.threads || {};
     return report;
   }
@@ -965,6 +1043,7 @@
       </article>`;
 
     drawCards();
+    drawBrands();
     drawTable();
     drawScatter();
     drawVolume();
@@ -979,9 +1058,22 @@
     </section>`;
   }
 
+  const PICK_ICON = [
+    [/skip|avoid/i, "!"],
+    [/solo/i, "◆"],
+    [/night|sleep|evening/i, "☾"],
+    [/day|morning/i, "☀"],
+    [/value|cheap|budget|price/i, "$"],
+    [/flavou?r|taste|terp/i, "✿"],
+    [/strong|potent|hardest/i, "⚡"],
+    [/beginner|first/i, "✦"],
+    [/overall|best/i, "★"],
+  ];
+
   function sectionPicks(g) {
     const picks = g.quick_picks || [];
     if (!picks.length) return "";
+    const byId = new Map((g.products || []).map((p) => [p.id, p]));
     return section(
       "picks",
       "Quick picks",
@@ -989,14 +1081,23 @@
       `<div class="rs-picks">${picks
         .map((pick) => {
           const skip = /skip|avoid/i.test(pick.label);
-          const target = pick.product ? `data-jump="rs-p-${esc(pick.product)}"` : "";
-          return `<div class="rs-pick${skip ? " rs-pick-skip" : ""}">
-            <p class="rs-pick-label">${esc(pick.label)}</p>
+          const solo = /solo/i.test(pick.label);
+          const icon = (PICK_ICON.find(([rx]) => rx.test(pick.label)) || [null, "•"])[1];
+          const p = byId.get(pick.product);
+          const target = p ? `data-jump="rs-p-${esc(p.id)}"` : "";
+          const facts = p
+            ? [plantBadge(p._plant, p.ocs?.plant), p.ocs && thcText(p.ocs) !== "—" ? `<span class="rs-fact-chip">THC ${esc(thcText(p.ocs))}</span>` : "",
+               p.ocs && typeof p.ocs.price === "number" ? `<span class="rs-fact-chip">${money(p.ocs.price)} / ${esc(p.ocs.size)}</span>` : "",
+               tierBadge(p.tier)].join("")
+            : "";
+          return `<div class="rs-pick${skip ? " rs-pick-skip" : ""}${solo ? " rs-solo" : ""}">
+            <p class="rs-pick-label"><span class="rs-pick-icon" aria-hidden="true">${icon}</span>${esc(pick.label)}</p>
             ${
               target
                 ? `<button type="button" class="rs-pick-name" ${target}>${esc(pick.pick)}</button>`
                 : `<p class="rs-pick-name">${esc(pick.pick)}</p>`
             }
+            ${facts ? `<div class="rs-pick-facts">${facts}</div>` : ""}
             <p class="rs-pick-why">${esc(pick.why)}</p>
           </div>`;
         })
@@ -1011,9 +1112,11 @@
     const cards = trends
       .map(
         (t) => `<div class="rs-trend-card" data-direction="${esc(t.direction)}">
-          ${trendChip(t.direction)}
+          <div class="rs-trend-top">${trendChip(t.direction)}${t.when ? `<span class="rs-hint">${esc(t.when)}</span>` : ""}</div>
           <h3>${esc(t.title)}</h3>
           <p>${esc(t.detail)}</p>
+          ${t.means ? `<p class="rs-means"><strong>For you:</strong> ${esc(t.means)}</p>` : ""}
+          ${(t.brands || []).length ? `<div class="rs-brand-chips">${t.brands.map((b) => `<button type="button" class="rs-brand-chip" data-brand-filter="${esc(b)}">${esc(b)}</button>`).join("")}</div>` : ""}
           ${threadLinks(r, t.threads)}
         </div>`
       )
@@ -1025,7 +1128,55 @@
           <div class="rs-chart-wrap" id="rs-volume"></div>
         </figure>`
       : "";
-    return section("trends", "What's changing", "", `<div class="rs-trend-grid">${cards}</div>${chart}`);
+    return section(
+      "trends",
+      "What's changing",
+      "",
+      `<div class="rs-trend-grid">${cards}</div>${moversPanel(r)}${newOnOcsPanel(r)}${chart}`
+    );
+  }
+
+  /* Brands whose share of the conversation moved: last 90 days vs before.
+     Counted, not the model's opinion. */
+  function moversPanel(r) {
+    const rows = (r.mentions?.brands || []).filter((b) => b.inTopic !== false && b.mentions >= 3);
+    const rising = rows.filter((b) => b.trend === "rising" || b.trend === "new").sort((a, b) => b.recent - a.recent).slice(0, 6);
+    const falling = rows.filter((b) => b.trend === "falling").sort((a, b) => b.mentions - a.mentions).slice(0, 6);
+    if (!rising.length && !falling.length) return "";
+    const list = (items, empty) =>
+      items.length
+        ? `<ul class="rs-movers">${items
+            .map(
+              (b) => `<li><button type="button" class="rs-mover-name" data-brand-filter="${esc(b.brand)}">${esc(b.brand)}</button>
+                ${sparkline(b.months)}
+                <span class="rs-num">${num(b.recent)} <span class="rs-hint">of ${num(b.mentions)} mentions in the last 90 days</span></span></li>`
+            )
+            .join("")}</ul>`
+        : `<p class="rs-hint">${empty}</p>`;
+    return `<div class="rs-movers-grid">
+      <div class="rs-movers-card"><h3>${trendChip("rising")} Talked about more</h3>${list(rising, "Nobody is clearly rising.")}</div>
+      <div class="rs-movers-card"><h3>${trendChip("falling")} Talked about less</h3>${list(falling, "Nobody is clearly cooling off.")}</div>
+    </div>`;
+  }
+
+  function newOnOcsPanel(r) {
+    const rows = r.newOnOcs || [];
+    if (!rows.length) return "";
+    return `<div class="rs-new">
+      <h3>New on OCS <span class="rs-hint">listed in the last ${NEW_DAYS} days</span></h3>
+      <ul class="rs-new-list">${rows
+        .slice(0, 12)
+        .map(
+          (n) => `<li>
+            <a href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><strong>${esc(n.brand)}</strong> ${esc(n.title)}</a>
+            <span class="rs-new-meta">${plantBadge(plantOf({ ocs: n }), n.plant)}
+              ${n.thcMax != null ? `<span class="rs-fact-chip">THC ${esc(thcText(n))}</span>` : ""}
+              ${typeof n.price === "number" ? `<span class="rs-fact-chip">${money(n.price)} / ${esc(n.size)}</span>` : ""}
+              <span class="rs-hint">${esc(when(n.created))} · ${n.online ? "online" : "stores"} · ${n.mentions ? `brand mentioned ${num(n.mentions)}×` : "not discussed yet"}</span></span>
+          </li>`
+        )
+        .join("")}</ul>
+    </div>`;
   }
 
   function drawVolume() {
@@ -1099,40 +1250,118 @@
   }
 
   function sectionBrands(r, g) {
-    const brands = g.brands || [];
-    if (!brands.length) return "";
-    const rows = brands
-      .map((b) => {
-        const m = b._mention;
-        return `<tr>
-          <th scope="row"><span class="rs-brand-name">${esc(b.brand)}</span></th>
-          <td>${tierBadge(b.tier)}</td>
-          <td>${trendChip(b.trend)}</td>
-          <td class="rs-num">${m ? `${m.mentions}<span class="rs-hint"> in ${m.threads} threads</span>` : "—"}</td>
-          <td>${m ? sparkline(m.months) : ""}</td>
-          <td>${m ? toneMeter(m.sentiment) : ""}</td>
-          <td class="rs-wide">${b.strengths ? `<p><strong>Good:</strong> ${esc(b.strengths)}</p>` : ""}${
-            b.weaknesses ? `<p><strong>Watch for:</strong> ${esc(b.weaknesses)}</p>` : ""
-          }${b.price ? `<p><strong>Price:</strong> ${esc(b.price)}</p>` : ""}<p>${esc(b.summary)}</p></td>
-        </tr>`;
-      })
-      .join("");
+    if (!(g.brands || []).length) return "";
     return section(
       "brands",
       "Brand report cards",
-      "People talk in brands first. Mentions, the monthly line and tone are counted from the threads read; the tier and notes are the guide's reading of them.",
-      `<div class="rs-table-wrap"><table class="rs-table rs-brand-table">
-        <thead><tr><th scope="col">Brand</th><th scope="col">Tier</th><th scope="col">Trend</th><th scope="col">Mentions</th>
-        <th scope="col">By month</th><th scope="col">Tone</th><th scope="col">Report</th></tr></thead>
-        <tbody>${rows}</tbody></table></div>`
+      "Tier, notes and best pick are the guide's reading of the threads; mentions, the monthly line and tone are counted; products and prices come from OCS.",
+      `<div class="rs-controls">
+        <label class="rs-search"><span class="sr-only">Search brands</span>
+          <svg class="icon" aria-hidden="true"><use href="#i-search" /></svg>
+          <input type="search" id="rs-bq" placeholder="Find a brand…" value="${esc(ui.brandQuery)}" /></label>
+        <label class="select"><span class="sr-only">Sort brands</span><select id="rs-bsort">
+          ${[
+            ["tier", "Best first"],
+            ["mentions", "Most talked about"],
+            ["trend", "Rising first"],
+            ["price", "Cheapest on OCS"],
+            ["name", "A–Z"],
+          ]
+            .map(([v, l]) => `<option value="${v}" ${ui.brandSort === v ? "selected" : ""}>${l}</option>`)
+            .join("")}
+        </select></label>
+      </div>
+      <div id="rs-brand-cards" class="rs-brand-cards"></div>`
     );
+  }
+
+  const TREND_RANK = { new: 0, rising: 1, steady: 2, falling: 3 };
+
+  function drawBrands() {
+    const box = $("#rs-brand-cards");
+    if (!box) return;
+    const q = ui.brandQuery.trim().toLowerCase();
+    const sorts = {
+      tier: (a, b) => TIER_ORDER[a.tier] - TIER_ORDER[b.tier] || (b._mention?.mentions || 0) - (a._mention?.mentions || 0),
+      mentions: (a, b) => (b._mention?.mentions || 0) - (a._mention?.mentions || 0),
+      trend: (a, b) => (TREND_RANK[a.trend] ?? 9) - (TREND_RANK[b.trend] ?? 9) || TIER_ORDER[a.tier] - TIER_ORDER[b.tier],
+      price: (a, b) => (a._ocs.min ?? Infinity) - (b._ocs.min ?? Infinity),
+      name: (a, b) => a.brand.localeCompare(b.brand),
+    };
+    const brands = (ui.report.guide.brands || [])
+      .filter((b) => !q || `${b.brand} ${b.known_for || ""} ${b.summary || ""}`.toLowerCase().includes(q))
+      .sort(sorts[ui.brandSort] || sorts.tier);
+    box.innerHTML = brands.length
+      ? brands.map(brandCard).join("")
+      : `<p class="rs-empty">No brand matches “${esc(ui.brandQuery)}”.</p>`;
+  }
+
+  function brandCard(b) {
+    const m = b._mention;
+    const o = b._ocs;
+    const priceRange =
+      o.min == null ? "" : o.min === o.max ? money(o.min) : `${money(o.min)}–${money(o.max)}`;
+    const split = (text) =>
+      String(text || "")
+        .split(/;\s+|\.\s+(?=[A-Z])/)
+        .map((x) => x.trim().replace(/\.$/, ""))
+        .filter(Boolean);
+    const good = split(b.strengths);
+    const bad = split(b.weaknesses);
+    const best = b.best_pick ? b._products.find((p) => p.name === b.best_pick) || b._products[0] : null;
+    return `<article class="card rs-brand-card" data-tier="${esc(b.tier)}">
+      <header class="rs-brand-head">
+        <div>
+          <h3 class="rs-brand-title">${esc(b.brand)}</h3>
+          ${b.known_for ? `<p class="rs-known">${esc(b.known_for)}</p>` : ""}
+        </div>
+        ${tierBadge(b.tier, { big: true })}
+      </header>
+      <div class="rs-brand-stats">
+        ${trendChip(b.trend)}
+        ${b.consistency && b.consistency !== "unknown" ? `<span class="rs-consistency rs-consistency-${esc(b.consistency)}">${esc(b.consistency)}</span>` : ""}
+        ${m ? `<span class="rs-num">${num(m.mentions)} mentions <span class="rs-hint">· ${num(m.threads)} threads</span></span>${sparkline(m.months)}` : ""}
+        ${m ? toneMeter(m.sentiment) : ""}
+      </div>
+      ${
+        o.count
+          ? `<p class="rs-brand-ocs"><strong>${num(o.count)}</strong> on OCS in this category · ${num(o.online)} online${
+              priceRange ? ` · <span class="private">${esc(priceRange)}</span>` : ""
+            }</p>`
+          : ""
+      }
+      ${
+        good.length || bad.length
+          ? `<div class="rs-pc">
+        <div class="rs-pros"><h4>Good</h4><ul>${good.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>
+        <div class="rs-cons"><h4>Watch for</h4><ul>${bad.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>
+      </div>`
+          : ""
+      }
+      ${b.summary ? `<p class="rs-brand-summary">${esc(b.summary)}</p>` : ""}
+      ${b.price ? `<p class="rs-hint"><strong>Price:</strong> ${esc(b.price)}</p>` : ""}
+      <div class="rs-actions">
+        ${
+          best
+            ? `<button class="btn btn-secondary btn-small" type="button" data-jump="rs-p-${esc(best.id)}">Best pick: ${esc(b.best_pick || best.name)}</button>`
+            : b.best_pick
+              ? `<span class="rs-hint">Best pick: ${esc(b.best_pick)}</span>`
+              : ""
+        }
+        ${b._products.length ? `<button class="btn btn-ghost btn-small" type="button" data-brand-filter="${esc(b.brand)}">See ${num(b._products.length)} ranked</button>` : ""}
+      </div>
+    </article>`;
   }
 
   function sectionRankings(g) {
     const products = g.products || [];
     if (!products.length) return "";
     const f = ui.filters;
-    const leans = [...new Set(products.map((p) => p.lean).filter((l) => l && l !== "unknown"))];
+    const plants = [...new Set(products.map((p) => p._plant).filter(Boolean))];
+    const uses = Object.keys(GOOD_FOR).filter((tag) => products.some((p) => (p.good_for || []).includes(tag)));
+    const brands = [...new Set(products.map((p) => p.brand))].sort((a, b) => a.localeCompare(b));
+    const hasSolo = products.some((p) => p.solo && ["great", "good"].includes(p.solo.fit));
+    const option = (value, label, current) => `<option value="${esc(value)}" ${current === value ? "selected" : ""}>${esc(label)}</option>`;
     return section(
       "rankings",
       `Rankings <span class="rs-count" id="rs-count"></span>`,
@@ -1140,14 +1369,28 @@
       `<div class="rs-controls">
         <label class="rs-search"><span class="sr-only">Search products</span>
           <svg class="icon" aria-hidden="true"><use href="#i-search" /></svg>
-          <input type="search" id="rs-q" placeholder="Brand, strain, flavour, effect…" value="${esc(f.q)}" /></label>
+          <input type="search" id="rs-q" placeholder="Brand, strain, terpene, flavour, effect…" value="${esc(f.q)}" /></label>
         <label class="select"><span class="sr-only">Tier</span><select id="rs-f-tier">
-          <option value="">All tiers</option>${TIERS.map((t) => `<option value="${t}" ${f.tier === t ? "selected" : ""}>${t === "AVOID" ? "Avoid" : `${t} tier`}</option>`).join("")}
+          <option value="">All tiers</option>${TIERS.map((t) => option(t, t === "AVOID" ? "Avoid" : `${t} tier`, f.tier)).join("")}
         </select></label>
         ${
-          leans.length
-            ? `<label class="select"><span class="sr-only">Effect</span><select id="rs-f-lean">
-          <option value="">Any effect</option>${leans.map((l) => `<option value="${esc(l)}" ${f.lean === l ? "selected" : ""}>${esc(l[0].toUpperCase() + l.slice(1))}</option>`).join("")}
+          plants.length
+            ? `<label class="select"><span class="sr-only">Indica or sativa</span><select id="rs-f-plant">
+          <option value="">Indica, sativa, hybrid</option>${plants.map((pl) => option(pl, pl[0].toUpperCase() + pl.slice(1), f.plant)).join("")}
+        </select></label>`
+            : ""
+        }
+        ${
+          uses.length
+            ? `<label class="select"><span class="sr-only">Good for</span><select id="rs-f-use">
+          <option value="">Good for anything</option>${uses.filter((u) => u !== "solo").map((u) => option(u, GOOD_FOR[u], f.use)).join("")}
+        </select></label>`
+            : ""
+        }
+        ${
+          brands.length > 1
+            ? `<label class="select"><span class="sr-only">Brand</span><select id="rs-f-brand">
+          <option value="">All brands</option>${brands.map((b) => option(b, b, f.brand)).join("")}
         </select></label>`
             : ""
         }
@@ -1157,12 +1400,16 @@
             ["price", "Cheapest per gram"],
             ["thc", "Strongest THC"],
             ["mentions", "Most talked about"],
+            ["new", "Newest on OCS"],
+            ["solo", "Solo sessions"],
             ["brand", "Brand A–Z"],
           ]
-            .map(([v, l]) => `<option value="${v}" ${f.sort === v ? "selected" : ""}>${l}</option>`)
+            .filter(([v]) => v !== "solo" || hasSolo)
+            .map(([v, l]) => `<option value="${v}" ${f.sort === v ? "selected" : ""}${v === "solo" ? ' class="rs-solo"' : ""}>${l}</option>`)
             .join("")}
         </select></label>
         <label class="rs-check"><input type="checkbox" id="rs-f-online" ${f.online ? "checked" : ""} /> Sold on ocs.ca</label>
+        ${hasSolo ? `<label class="rs-check rs-solo"><input type="checkbox" id="rs-f-solo" ${f.solo ? "checked" : ""} /> Good for solo sessions</label>` : ""}
       </div>
       <div class="rs-tier-key">${TIERS.map((t) => `<span>${tierBadge(t)} ${esc(TIER_TEXT[t])}</span>`).join("")}</div>
       <div id="rs-cards" class="rs-cards"></div>`
@@ -1176,6 +1423,10 @@
       (p) =>
         (!f.tier || p.tier === f.tier) &&
         (!f.lean || p.lean === f.lean) &&
+        (!f.plant || p._plant === f.plant) &&
+        (!f.use || (p.good_for || []).includes(f.use)) &&
+        (!f.brand || p.brand === f.brand) &&
+        (!f.solo || (p.solo && ["great", "good"].includes(p.solo.fit))) &&
         (!f.online || (p.ocs && p.ocs.online)) &&
         (!q || p._haystack.includes(q))
     );
@@ -1185,6 +1436,8 @@
       price: (a, b) => (a._ppg ?? Infinity) - (b._ppg ?? Infinity) || byScore(a, b),
       thc: (a, b) => b._thc - a._thc || byScore(a, b),
       mentions: (a, b) => (b._mention?.mentions || 0) - (a._mention?.mentions || 0) || byScore(a, b),
+      new: (a, b) => String(b.ocs?.created || "").localeCompare(String(a.ocs?.created || "")) || byScore(a, b),
+      solo: (a, b) => (SOLO_RANK[a.solo?.fit] ?? 3) - (SOLO_RANK[b.solo?.fit] ?? 3) || byScore(a, b),
       brand: (a, b) => a.brand.localeCompare(b.brand) || byScore(a, b),
     };
     return list.sort(sorts[f.sort] || byScore);
@@ -1206,13 +1459,10 @@
     const r = ui.report;
     const o = p.ocs;
     const tags = [
-      p.kind,
-      p.lean && p.lean !== "unknown" ? p.lean : "",
-      o ? (o.online ? "on ocs.ca" : "stores only") : "not matched to OCS",
-    ]
-      .filter(Boolean)
-      .map((t) => `<span class="chip">${esc(t)}</span>`)
-      .join("");
+      plantBadge(p._plant, o?.plant),
+      p._new ? `<span class="rs-new-badge">New on OCS</span>` : "",
+      ...[p.kind, o ? (o.online ? "on ocs.ca" : "stores only") : "not matched to OCS"].filter(Boolean).map((t) => `<span class="chip">${esc(t)}</span>`),
+    ].join("");
     const quotes = (p.quotes || [])
       .map(
         (q) => `<blockquote class="rs-quote"><p>“${esc(q.text)}”</p>
@@ -1223,12 +1473,23 @@
       .join("");
     const search = encodeURIComponent(`${p.brand} ${String(p.name).split(/[(/—]/)[0]}`.trim());
     const facts = [
-      ["OCS price", o && typeof o.price === "number" ? `${money(o.price)} <span class="rs-hint">/ ${esc(o.size)}</span>` : "—"],
-      ["Per gram", p._ppg ? money(p._ppg) : "—"],
+      ["OCS price", o && typeof o.price === "number" ? `<span class="private">${money(o.price)}</span> <span class="rs-hint">/ ${esc(o.size)}</span>` : "—"],
+      ["Per gram", p._ppg ? `<span class="private">${money(p._ppg)}</span>` : "—"],
       ["THC", thcText(o)],
-      ["Terpenes", o && o.terpenes?.length ? esc(o.terpenes.slice(0, 3).join(", ")) : "—"],
+      ["CBD", o && o.cbdMax ? `${o.cbdMin === o.cbdMax ? o.cbdMax : `${o.cbdMin}–${o.cbdMax}`}%` : "—"],
+      ["Strength", p.strength && p.strength !== "unknown" ? esc(p.strength) : "—"],
+      ["Best time", TIME_LABEL[p.best_time] || "—"],
       ["Talked about", p._mention ? `${p._mention.mentions}× <span class="rs-hint">(brand)</span>` : "—"],
-    ];
+    ].filter(([, v]) => v !== "—");
+    const details = [
+      ["Terpenes", o?.terpenes?.length ? esc(o.terpenes.join(", ")) : ""],
+      ["Genetics", o?.genetics ? esc(o.genetics) : ""],
+      ["Made by", o ? esc([o.subsub, o.process].filter(Boolean).join(" · ")) : ""],
+      ["Producer", o?.producer ? esc(`${o.producer}${o.province ? `, ${o.province}` : ""}`) : ""],
+      ["Sizes", o?.sizes?.length > 1 ? o.sizes.map((z) => `${esc(z.size)} <span class="private">${money(z.price)}</span>${z.available ? "" : ' <span class="rs-hint">(out)</span>'}`).join(" · ") : ""],
+      ["On OCS since", o?.created ? esc(when(o.created)) : ""],
+    ].filter(([, v]) => v);
+    const uses = goodForChips(p);
     return `<article class="card rs-card" id="rs-p-${esc(p.id)}" data-tier="${esc(p.tier)}">
       <div class="rs-card-head">
         ${o && o.image ? `<img class="rs-thumb" src="${esc(o.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : `<span class="rs-thumb rs-thumb-empty" aria-hidden="true"></span>`}
@@ -1240,8 +1501,22 @@
         <div class="rs-score">${tierBadge(p.tier, { big: true })}<b>${Number(p.score).toFixed(1)}</b><small>/ 10</small></div>
       </div>
       <dl class="rs-facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>
+      ${uses ? `<div class="rs-uses"><span class="rs-hint">Good for</span>${uses}</div>` : ""}
       <p class="rs-verdict">${esc(p.verdict)}</p>
-      ${p.flavour || p.effects ? `<p class="rs-fe">${p.flavour ? `<span><strong>Flavour</strong> ${esc(p.flavour)}</span>` : ""}${p.effects ? `<span><strong>Effects</strong> ${esc(p.effects)}</span>` : ""}</p>` : ""}
+      ${
+        p.high || p.flavour || p.effects || p.hardware || p.value
+          ? `<dl class="rs-fe">${[
+              ["The high", p.high || p.effects],
+              ["Flavour", p.flavour],
+              ["Hardware", p.hardware],
+              ["Value", p.value],
+            ]
+              .filter(([, v]) => v)
+              .map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`)
+              .join("")}</dl>`
+          : ""
+      }
+      ${soloBlock(p)}
       ${
         (p.pros || []).length || (p.cons || []).length
           ? `<div class="rs-pc">
@@ -1250,6 +1525,7 @@
       </div>`
           : ""
       }
+      ${details.length ? `<details class="rs-said"><summary>Product details</summary><dl class="rs-details">${details.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl></details>` : ""}
       ${quotes ? `<details class="rs-said"><summary>What people said (${p.quotes.length})</summary>${quotes}</details>` : ""}
       <div class="rs-actions">
         <button class="btn btn-secondary btn-small" type="button" data-add="${esc(p.id)}">
@@ -1381,7 +1657,10 @@
     ["score", "Score", (p) => p.score.toFixed(1), (p) => p.score],
     ["brand", "Brand", (p) => esc(p.brand), (p) => p.brand.toLowerCase()],
     ["name", "Product", (p) => esc(p.name), (p) => p.name.toLowerCase()],
-    ["lean", "Effect", (p) => esc(p.lean === "unknown" ? "—" : p.lean), (p) => p.lean],
+    ["plant", "Type", (p) => plantBadge(p._plant, p.ocs?.plant) || "—", (p) => p._plant || "~"],
+    ["strength", "Strength", (p) => esc(p.strength && p.strength !== "unknown" ? p.strength : "—"),
+      (p) => ({ "very strong": 0, strong: 1, medium: 2, mild: 3 })[p.strength] ?? 4],
+    ["time", "Best time", (p) => esc(TIME_LABEL[p.best_time] || "—"), (p) => p.best_time || "~"],
     ["price", "OCS $", (p) => money(p.ocs?.price), (p) => p.ocs?.price ?? Infinity],
     ["size", "Size", (p) => esc(p.ocs?.size || "—"), (p) => grams(p.ocs?.size) ?? Infinity],
     ["ppg", "$ / g", (p) => (p._ppg ? money(p._ppg) : "—"), (p) => p._ppg ?? Infinity],
@@ -1527,7 +1806,7 @@
     if (!target) return;
     if (target.classList.contains("rs-card") && target.closest("#rs-cards") === null) return;
     if (!target.isConnected || target.offsetParent === null) {
-      ui.filters = { ...ui.filters, q: "", tier: "", lean: "", online: false };
+      ui.filters = { ...ui.filters, q: "", tier: "", lean: "", plant: "", use: "", brand: "", solo: false, online: false };
       drawCards();
     }
     const el = document.getElementById(id);
@@ -1548,7 +1827,7 @@
     if (t.dataset.open) return go(t.dataset.open);
     if (t.dataset.jump) {
       if (!document.getElementById(t.dataset.jump)) {
-        ui.filters = { ...ui.filters, q: "", tier: "", lean: "", online: false };
+        ui.filters = { ...ui.filters, q: "", tier: "", lean: "", plant: "", use: "", brand: "", solo: false, online: false };
         drawCards();
       }
       return jumpTo(t.dataset.jump);
@@ -1573,6 +1852,7 @@
     if (t.dataset.add) return addToList(t, t.dataset.add);
     if (t.dataset.delete) return deleteReport(t.dataset.delete);
     if (t.dataset.archive) return setArchived(t.dataset.archive, t.dataset.to === "true");
+    if (t.dataset.brandFilter) return showBrand(t.dataset.brandFilter);
     if (t.dataset.resume) return resumeRun(t.dataset.resume, t.dataset.providerTo, t.dataset.modelTo, t.dataset.effortTo);
     if (t.dataset.discard) return discardRun(t.dataset.discard);
     if (t.dataset.list) {
@@ -1602,7 +1882,7 @@
         return startRun({ topic: topic.key, query: topic.query || "", depth: ui.depth });
       }
       case "clear-filters":
-        ui.filters = { ...ui.filters, q: "", tier: "", lean: "", online: false };
+        ui.filters = { ...ui.filters, q: "", tier: "", lean: "", plant: "", use: "", brand: "", solo: false, online: false };
         drawCards();
         syncFilterInputs();
         return undefined;
@@ -1618,6 +1898,21 @@
     if ($("#rs-f-tier")) $("#rs-f-tier").value = f.tier;
     if ($("#rs-f-lean")) $("#rs-f-lean").value = f.lean;
     if ($("#rs-f-online")) $("#rs-f-online").checked = f.online;
+    if ($("#rs-f-plant")) $("#rs-f-plant").value = f.plant;
+    if ($("#rs-f-use")) $("#rs-f-use").value = f.use;
+    if ($("#rs-f-brand")) $("#rs-f-brand").value = f.brand;
+    if ($("#rs-f-solo")) $("#rs-f-solo").checked = f.solo;
+  }
+
+  /* "See products" on a brand card, trend or mover: filter the rankings to
+     that brand (or search for it if the guide ranked none of its products). */
+  function showBrand(name) {
+    const ranked = (ui.report.guide.products || []).some((p) => p.brand === name);
+    ui.filters = { ...ui.filters, q: ranked ? "" : name, tier: "", lean: "", plant: "", use: "", solo: false, online: false,
+      brand: ranked ? name : "" };
+    syncFilterInputs();
+    drawCards();
+    jumpTo("rs-rankings");
   }
 
   async function addToList(button, id) {
@@ -1661,7 +1956,7 @@
     const t = event.target;
     /* Text fields react as you type. Their "change" on blur would redraw the
        cards under a click that is already in progress. */
-    if (event.type === "change" && (t.id === "rs-q" || t.id === "rs-query" || t.id === "rs-model-custom")) return undefined;
+    if (event.type === "change" && ["rs-q", "rs-bq", "rs-query", "rs-model-custom"].includes(t.id)) return undefined;
     if (t.name === "rs-topic") {
       ui.topic = t.value;
       ui.startError = "";
@@ -1698,7 +1993,13 @@
       savePrefs();
       return undefined;
     }
-    const filters = { "rs-q": "q", "rs-f-tier": "tier", "rs-f-lean": "lean", "rs-sort": "sort", "rs-f-online": "online" };
+    if (t.id === "rs-bq" || t.id === "rs-bsort") {
+      if (t.id === "rs-bq") ui.brandQuery = t.value;
+      else ui.brandSort = t.value;
+      return drawBrands();
+    }
+    const filters = { "rs-q": "q", "rs-f-tier": "tier", "rs-f-lean": "lean", "rs-sort": "sort", "rs-f-online": "online",
+      "rs-f-plant": "plant", "rs-f-use": "use", "rs-f-brand": "brand", "rs-f-solo": "solo" };
     if (filters[t.id]) {
       ui.filters[filters[t.id]] = t.type === "checkbox" ? t.checked : t.value;
       drawCards();
