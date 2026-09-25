@@ -1511,7 +1511,7 @@ def fit_for_limit(state: dict[str, Any], limit: int, report: Callable[..., None]
         state["batches"] = cut_blocks(blocks, budget)
         state["mode"] = "batches"
         report("write", f"{who} can only read about {limit // 1000} KB at once, so the {len(blocks)} threads "
-                        f"are split into {len(state['batches'])} parts")
+                        f"are split into {len(state['batches'])} parts", parts=len(state["batches"]), parts_done=0)
         return
     notes, batches = state["notes"], state["batches"]
     unread = [b for i, b in enumerate(batches, 1) if str(i) not in notes]
@@ -1523,7 +1523,8 @@ def fit_for_limit(state: dict[str, Any], limit: int, report: Callable[..., None]
     state["batches"] = kept + recut
     state["notes"] = {str(k): notes[str(old)] for k, old in enumerate(read, 1)}
     state["skipped"] = []
-    report("write", f"Re-cut the unread evidence into {len(recut)} smaller parts for {who}")
+    report("write", f"Re-cut the unread evidence into {len(recut)} smaller parts for {who}",
+           parts=len(state["batches"]), parts_done=len(state["notes"]))
 
 
 RETRY_NOTE = """
@@ -1648,6 +1649,7 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
         try:
             if batches:
                 todo = [i for i in range(1, len(batches) + 1) if str(i) not in notes]
+                report("write", f"{len(batches)} parts in all", parts=len(batches), parts_done=len(notes))
                 if len(todo) < len(batches):
                     report("write", f"{len(batches) - len(todo)} of {len(batches)} parts were already read; "
                                     f"reading the other {len(todo)}")

@@ -439,9 +439,11 @@ class PauseTest(unittest.TestCase):
 
     def test_grok_one_pass_run_is_split_into_parts_that_fit(self) -> None:
         import llm
-        sizes = []
+        sizes, counts = [], {}
         with mock.patch.object(llm, "ask", self.grok_fake(sizes)):
-            path = research.write(self.big_state(40, 900, "single"), provider="grok", out_dir=self.out)
+            path = research.write(self.big_state(40, 900, "single"), provider="grok", out_dir=self.out,
+                                  progress=lambda stage, message, **c: counts.update(c))
+        self.assertEqual(counts["parts"], counts["parts_done"], "the progress panel's totals must match the re-cut parts")
         document = json.loads(path.read_text())
         self.assertGreater(document["stats"]["parts"], 3)
         self.assertEqual(document["stats"]["commentsRead"], 400)
