@@ -89,6 +89,14 @@ class QuoteTest(unittest.TestCase):
         corpus = {"c1": "I bought it at [the dispensary](https://example.com/x) downtown &amp; loved it"}
         self.assertEqual(research.verify_quotes(guide, corpus, {})[0], 1)
 
+    def test_quote_from_the_post_itself_is_kept_even_with_a_comment_id(self) -> None:
+        guide = self.report("the label changed from 100% live resin", comment="c1")
+        kept, dropped = research.verify_quotes(guide, {"c1": "unrelated comment"},
+                                               {"t9": "Title\nI noticed the label changed from 100% live resin to extract."})
+        self.assertEqual((kept, dropped), (1, []))
+        self.assertEqual(guide["products"][0]["quotes"][0]["thread"], "t9")
+        self.assertEqual(guide["products"][0]["quotes"][0]["comment"], "")
+
     def test_wrong_comment_id_is_repaired(self) -> None:
         guide = self.report("smooth hits at 2.0 volts", comment="c1")
         research.verify_quotes(guide, {"c1": "unrelated", "c2": "Smooth hits at 2.0 volts every time"}, {})

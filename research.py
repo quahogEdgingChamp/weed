@@ -1104,14 +1104,23 @@ def verify_quotes(report: dict[str, Any], corpus: dict[str, str], thread_texts: 
                 good.append(quote)
                 kept += 1
                 continue
-            # The model sometimes cites the wrong comment in the right thread.
+            # The model sometimes cites the wrong comment, or a comment id for
+            # words that are really in the post itself. Look everywhere and
+            # fix the reference.
             match = next((cid for cid, text in cleaned.items() if fragments and all(f in text for f in fragments)), None)
+            post = None if match else next(
+                (tid for tid, text in threads.items() if fragments and all(f in text for f in fragments)), None)
             if match:
                 quote["comment"] = match
                 good.append(quote)
                 kept += 1
+            elif post:
+                quote["thread"], quote["comment"] = post, ""
+                good.append(quote)
+                kept += 1
             else:
-                dropped.append({"product": product.get("name", ""), "text": (quote.get("text") or "")[:300]})
+                dropped.append({"product": product.get("name", ""), "text": (quote.get("text") or "")[:300],
+                                "thread": quote.get("thread") or "", "comment": quote.get("comment") or ""})
         product["quotes"] = good
     return kept, dropped
 
