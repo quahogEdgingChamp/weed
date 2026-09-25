@@ -1256,7 +1256,7 @@ def reporter(progress: Callable[..., None] | None) -> tuple[Callable[..., None],
 
 
 def run(topic_key: str, query: str = "", *, depth: str = "quick", provider: str = "claude", model: str = "",
-        effort: str = "", use_llm: bool | None = None, subreddits: tuple[str, ...] = DEFAULT_SUBREDDITS,
+        effort: str = "", light_reading: bool = True, use_llm: bool | None = None, subreddits: tuple[str, ...] = DEFAULT_SUBREDDITS,
         out_dir: Path, progress: Callable[..., None] | None = None, cancel: threading.Event | None = None) -> Path:
     """Do the whole thing; return the path of the saved report.
 
@@ -1267,11 +1267,13 @@ def run(topic_key: str, query: str = "", *, depth: str = "quick", provider: str 
         provider = "none"
     state = gather(topic_key, query, depth=depth, subreddits=subreddits, out_dir=out_dir, progress=progress,
                    cancel=cancel)
-    return write(state, provider=provider, model=model, effort=effort, out_dir=out_dir, progress=progress,
+    return write(state, provider=provider, model=model, effort=effort, light_reading=light_reading, out_dir=out_dir,
+                 progress=progress,
                  cancel=cancel)
 
 
-def resume(checkpoint: str, *, provider: str, model: str = "", effort: str = "", out_dir: Path,
+def resume(checkpoint: str, *, provider: str, model: str = "", effort: str = "", light_reading: bool = True,
+           out_dir: Path,
            progress: Callable[..., None] | None = None, cancel: threading.Event | None = None) -> Path:
     """Carry on a saved run: parts already read are kept, the rest are read now."""
     state = read_checkpoint(out_dir, checkpoint)
@@ -1281,7 +1283,8 @@ def resume(checkpoint: str, *, provider: str, model: str = "", effort: str = "",
     done = len(state.get("notes") or {})
     total = len(state.get("batches") or [])
     report("write", f"Continuing “{state['topic']['label']}”" + (f": {done} of {total} parts already read" if total else ""))
-    return write(state, provider=provider, model=model, effort=effort, out_dir=out_dir, progress=progress,
+    return write(state, provider=provider, model=model, effort=effort, light_reading=light_reading, out_dir=out_dir,
+                 progress=progress,
                  cancel=cancel)
 
 
@@ -1535,6 +1538,14 @@ TIMING_KEEP = 30
 _timing_lock = threading.Lock()
 
 
+def lighter_effort(effort: str) -> str:
+    """Thinking level for reading parts and condensing notes. Taking notes on
+    evidence doesn't need maximum thinking; at xhigh Grok spent 25–97k tokens
+    thinking per part, and once ran out of room before writing any answer.
+    The chosen level is kept for writing the guide itself."""
+    return "medium" if effort in ("high", "xhigh", "max", "ultra") else effort
+
+
 def timing_key(provider: str, model: str, effort: str) -> str:
     return f"{provider}|{model or 'default'}|{effort or 'default'}"
 
@@ -1624,16 +1635,46 @@ def ask_checked(provider: str, *, prompt: str, schema: dict[str, Any], model: st
     An empty answer twice is a failure (ModelError), never a result: a guide
     with no products or notes with nothing in them must not pass as done.
     """
+    last_error = ""
     for attempt in (1, 2):
-        result = llm.ask(provider, system=SYSTEM_PROMPT, prompt=prompt + (RETRY_NOTE if attempt == 2 else ""),
-                         schema=schema, model=model, effort=effort, cancel=cancel, log=log, timeout=timeout,
-                         label=label)
+        try:
+            result = llm.ask(provider, system=SYSTEM_PROMPT, prompt=prompt + (RETRY_NOTE if attempt == 2 else ""),
+                             schema=schema, model=model, effort=effort, cancel=cancel, log=log, timeout=timeout,
+                             label=label)
+        except llm.LimitError:
+            raise
+        except llm.ModelError as error:
+            # e.g. Grok spent its whole output budget thinking and was cut off
+            # ("cancelled", no JSON). Worth one more try; a limit is not.
+            last_error = str(error)
+            log(f"{label} failed ({last_error[:160]})" + ("; trying once more" if attempt == 1 else ""))
+            continue
         with lock:
             spend(result)
         if not empty(result["data"]):
             return result
+        last_error = "an empty answer"
         log(f"{label} answered with nothing in it" + ("; asking once more" if attempt == 1 else ""))
-    raise llm.ModelError(f"{label} gave an empty answer twice")
+    raise llm.ModelError(f"{label} failed twice: {last_error[:300]}")
+
+
+def trim_notes(text: str, budget: int) -> str:
+    """Shorten notes without a model: keep whole product entries, the ones the
+    most people talked about first, until `budget` bytes are used."""
+    entries = re.split(r"(?m)^(?=- )", text)
+    head, entries = [e for e in entries if not e.startswith("- ")], [e for e in entries if e.startswith("- ")]
+
+    def people(entry: str) -> float:
+        match = re.search(r"~(\d+(?:\.\d+)?) people", entry)
+        return float(match.group(1)) if match else 0.0
+
+    kept, size = [], 0
+    for entry in sorted(entries, key=people, reverse=True):
+        if size + nbytes(entry) > budget:
+            continue
+        kept.append(entry)
+        size += nbytes(entry)
+    return "## Notes (trimmed)\n" + "".join(kept)
 
 
 def merge_notes(texts: list[str], *, limit: int, budget: int, provider: str, model: str, effort: str,
@@ -1659,9 +1700,16 @@ def merge_notes(texts: list[str], *, limit: int, budget: int, provider: str, mod
 
         def merge(index: int, group: list[str]) -> str:
             prompt = MERGE_INSTRUCTIONS.format(label=topic["label"]) + part_head + "\n" + "\n".join(group)
-            result = ask_checked(provider, prompt=prompt, schema=NOTES_SCHEMA, model=model, effort=effort,
-                                 cancel=cancel, log=logger("write"), timeout=1500,
-                                 label=f"{who} (condensing {index})", spend=spend, lock=lock, empty=notes_empty)
+            try:
+                result = ask_checked(provider, prompt=prompt, schema=NOTES_SCHEMA, model=model, effort=effort,
+                                     cancel=cancel, log=logger("write"), timeout=1500,
+                                     label=f"{who} (condensing {index})", spend=spend, lock=lock, empty=notes_empty)
+            except llm.LimitError:
+                raise
+            except llm.ModelError as error:
+                report("write", f"Condensing group {index} failed ({str(error)[:120]}); keeping its most-discussed "
+                                f"products instead")
+                return trim_notes("\n".join(group), max(group_budget // 2, 4000))
             return notes_text(index, result["data"], compact=True)
 
         with ThreadPoolExecutor(max_workers=parallel) as pool:
@@ -1684,8 +1732,8 @@ def new_on_ocs(state: dict[str, Any], days: int = 90) -> list[dict[str, Any]]:
              "mentions": talked.get(brand_key(r["brand"]), 0)} for r in rows[:24]]
 
 
-def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str = "", out_dir: Path,
-          progress: Callable[..., None] | None = None, cancel: threading.Event | None = None) -> Path:
+def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str = "", light_reading: bool = True,
+          out_dir: Path, progress: Callable[..., None] | None = None, cancel: threading.Event | None = None) -> Path:
     """Stage 5: the model calls, then the saved guide.
 
     With a model, the state is saved as a checkpoint before the first call and
@@ -1701,7 +1749,9 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
     if limit:
         fit_for_limit(state, limit, report, who)
     part_head = state["slimHead"] if limit else state["head"]
+    read_effort = lighter_effort(effort) if light_reading else effort
     key = timing_key(provider, model, effort)
+    part_key = timing_key(provider, model, read_effort)
     batches = state["batches"]
     notes: dict[str, Any] = state["notes"]
     usage = state["usage"]
@@ -1729,7 +1779,7 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
             if batches:
                 todo = [i for i in range(1, len(batches) + 1) if str(i) not in notes]
                 report("write", f"{len(batches)} parts in all", parts=len(batches), parts_done=len(notes),
-                       parallel=settings.get("parallel", 3), typical_part=typical_timing(out_dir, key, "part"),
+                       parallel=settings.get("parallel", 3), typical_part=typical_timing(out_dir, part_key, "part"),
                        typical_final=typical_timing(out_dir, key, "final"))
                 if len(todo) < len(batches):
                     report("write", f"{len(batches) - len(todo)} of {len(batches)} parts were already read; "
@@ -1740,12 +1790,12 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
                               + (TIGHT_NOTES if limit else "") + part_head
                               + "\n## Threads in this part\n\n" + batches[index - 1]["text"])
                     part_started = time.monotonic()
-                    result = ask_checked(provider, prompt=prompt, schema=NOTES_SCHEMA, model=model, effort=effort,
+                    result = ask_checked(provider, prompt=prompt, schema=NOTES_SCHEMA, model=model, effort=read_effort,
                                          cancel=cancel, log=logger("write"), timeout=1500,
                                          label=f"{who} (part {index})", spend=spend, lock=lock,
                                          empty=lambda data: batches[index - 1]["comments"] >= 5 and notes_empty(data))
                     took = time.monotonic() - part_started
-                    record_timing(out_dir, key, "part", took)
+                    record_timing(out_dir, part_key, "part", took)
                     with lock:
                         notes[str(index)] = {"data": result["data"], "by": f"{who} ({result['model']})"}
                         save("running")
@@ -1754,7 +1804,9 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
                                part_seconds=round(took))
 
                 if todo:
-                    report("write", f"{who} is reading {len(todo)} parts, {settings.get('parallel', 3)} at a time")
+                    report("write", f"{who} is reading {len(todo)} parts, {settings.get('parallel', 3)} at a time"
+                                    + (f", at {read_effort} thinking (the guide itself at {effort})"
+                                       if read_effort != effort else ""))
                 stop: BaseException | None = None
                 with ThreadPoolExecutor(max_workers=settings.get("parallel", 3)) as pool:
                     futures = [pool.submit(read_part, i) for i in todo]
@@ -1785,7 +1837,7 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
                 if limit:
                     final_head = compact_head(state, rows=150)
                     texts = merge_notes(texts, limit=limit, budget=limit - nbytes(INSTRUCTIONS) - nbytes(REDUCE_NOTE)
-                                        - nbytes(final_head) - 3000, provider=provider, model=model, effort=effort,
+                                        - nbytes(final_head) - 3000, provider=provider, model=model, effort=read_effort,
                                         topic=topic, part_head=part_head, cancel=cancel, logger=logger, report=report,
                                         spend=spend, lock=lock, who=who, parallel=settings.get("parallel", 3))
                 packet = (REDUCE_NOTE.format(threads=threads_read, comments=comments_read, parts=len(ordered))
@@ -1820,8 +1872,14 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
             save("stopped", reason="Stopped by you.", resets="", seconds=state["seconds"] + round(time.time() - writing_started))
             raise
         except (llm.ModelError, SourceError, OSError) as error:
-            note = f"{who} failed ({error}); this report was built from counts instead."
-            report("write", note)
+            # Everything gathered and read is in the checkpoint: pause, so the
+            # run can be retried or finished by another writer. A counts-only
+            # guide would throw that work away.
+            message = f"{who} couldn't finish ({str(error)[:300]})."
+            save("failed", reason=message, resets="", seconds=state["seconds"] + round(time.time() - writing_started))
+            report("paused", message + " Everything read so far is saved: try again, or finish with another writer.",
+                   checkpoint=state["id"])
+            raise Paused(state["id"], message) from error
 
     # The guide, from the model or from the counts.
     writer: dict[str, Any] = {"by": "counts", "provider": None, "model": None, "effort": effort or None,
@@ -2025,18 +2083,21 @@ class Jobs:
         return bool(self.job and self.job["status"] == "running")
 
     def start(self, topic_key: str, query: str, depth: str, provider: str, model: str = "",
-              effort: str = "") -> dict[str, Any]:
+              effort: str = "", light_reading: bool = True) -> dict[str, Any]:
         resolve_topic(topic_key, query)  # raises ValueError on a bad request
         if depth not in DEPTHS:
             raise ValueError("Unknown depth.")
         model, effort = self._check(provider, model, effort)
         label = TOPICS[topic_key]["label"] if topic_key in TOPICS else query.strip()[:80]
         return self._launch(
-            dict(topic=topic_key, label=label, query=query, depth=depth, provider=provider, model=model, effort=effort),
+            dict(topic=topic_key, label=label, query=query, depth=depth, provider=provider, model=model, effort=effort,
+                 lightReading=light_reading),
             lambda cancel: run(topic_key, query, depth=depth, provider=provider, model=model, effort=effort,
+                               light_reading=light_reading,
                                out_dir=self.out_dir, progress=self._progress, cancel=cancel))
 
-    def resume(self, checkpoint: str, provider: str, model: str = "", effort: str = "") -> dict[str, Any]:
+    def resume(self, checkpoint: str, provider: str, model: str = "", effort: str = "",
+               light_reading: bool = True) -> dict[str, Any]:
         """Continue a paused/stopped/interrupted run, with any writer."""
         meta = next((m for m in list_checkpoints(self.out_dir) if m.get("id") == checkpoint), None)
         if meta is None:
@@ -2051,7 +2112,8 @@ class Jobs:
             dict(topic=meta["topic"]["key"], label=meta["topic"]["label"], query=meta["topic"].get("query") or "",
                  depth=meta["depth"], provider=provider, model=model, effort=effort, checkpoint=checkpoint,
                  resumed=True),
-            lambda cancel: resume(checkpoint, provider=provider, model=model, effort=effort, out_dir=self.out_dir,
+            lambda cancel: resume(checkpoint, provider=provider, model=model, effort=effort,
+                                  light_reading=light_reading, out_dir=self.out_dir,
                                   progress=self._progress, cancel=cancel))
 
     @staticmethod

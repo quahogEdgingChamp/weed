@@ -328,17 +328,6 @@ class PauseTest(unittest.TestCase):
             path = research.resume("hash-20260101T000000Z", provider="grok", out_dir=self.out)
         self.assertEqual(json.loads(path.read_text())["writer"]["by"], "grok")
 
-    def test_other_failures_still_fall_back_to_counts(self) -> None:
-        import llm
-
-        def broken(*_a, **_k):
-            raise llm.ModelError("schema mismatch")
-
-        with mock.patch.object(llm, "ask", broken):
-            path = research.write(fake_state(), provider="claude", out_dir=self.out)
-        self.assertEqual(json.loads(path.read_text())["writer"]["by"], "counts")
-        self.assertEqual(research.list_checkpoints(self.out), [])
-
     def test_stop_keeps_what_was_read(self) -> None:
         import llm
         stop = threading.Event()
@@ -361,24 +350,6 @@ class PauseTest(unittest.TestCase):
             research.DEPTHS["deep"]["parallel"] = saved_parallel
         saved = research.read_checkpoint(self.out, state["id"])
         self.assertEqual((saved["status"], sorted(saved["notes"])), ("stopped", ["1"]))
-
-    def test_empty_guide_is_retried_then_refused(self) -> None:
-        import llm
-        calls = []
-
-        def empty_guide(provider, *, prompt, schema, **_):
-            calls.append("retry" if "Your previous answer was empty" in prompt else "first")
-            data = json.loads(json.dumps(GUIDE))
-            data["products"] = []
-            data["headline"] = "Reading the rest of the packet"
-            return {"data": data, "model": "m", "cost": None, "tokens": {}, "seconds": 1}
-
-        with mock.patch.object(llm, "ask", empty_guide):
-            path = research.write(fake_state(), provider="claude", out_dir=self.out)
-        document = json.loads(path.read_text())
-        self.assertEqual(calls, ["first", "retry"])
-        self.assertEqual(document["writer"]["by"], "counts")
-        self.assertIn("empty answer twice", document["writer"]["note"])
 
     def test_placeholder_then_real_guide_is_accepted(self) -> None:
         import llm
@@ -475,6 +446,87 @@ class PauseTest(unittest.TestCase):
             with self.assertRaises(llm.ModelError):
                 llm.ask("grok", system="s", prompt="x" * 90_000, schema={"type": "object"})
         run.assert_not_called()
+
+    def test_empty_guide_is_retried_then_paused_not_thrown_away(self) -> None:
+        import llm
+        calls = []
+
+        def empty_guide(provider, *, prompt, schema, **_):
+            calls.append("retry" if "Your previous answer was empty" in prompt else "first")
+            data = json.loads(json.dumps(GUIDE))
+            data["products"] = []
+            data["headline"] = "Reading the rest of the packet"
+            return {"data": data, "model": "m", "cost": None, "tokens": {}, "seconds": 1}
+
+        with mock.patch.object(llm, "ask", empty_guide):
+            with self.assertRaises(research.Paused) as caught:
+                research.write(fake_state(), provider="claude", out_dir=self.out)
+        self.assertEqual(calls, ["first", "retry"])
+        self.assertIn("failed twice", str(caught.exception))
+        self.assertEqual(research.read_checkpoint(self.out, "hash-20260101T000000Z")["status"], "failed")
+
+    def test_failure_after_parts_keeps_the_notes_for_another_writer(self) -> None:
+        # The run that lost 2 h 50 min: every part read, then the last step failed.
+        import llm
+
+        def final_fails(provider, *, prompt, schema, **_):
+            if schema is research.REPORT_SCHEMA:
+                raise llm.ModelError("Grok's reply had no answer in it: stopReason cancelled")
+            return {"data": {"products": [{"brand": "B"}], "brands": [], "trends": [], "warnings": [], "questions": [],
+                             "tips": []}, "model": "g", "cost": None, "tokens": {}, "seconds": 1}
+
+        with mock.patch.object(llm, "ask", final_fails):
+            with self.assertRaises(research.Paused):
+                research.write(fake_state(3), provider="grok", out_dir=self.out)
+        saved = research.read_checkpoint(self.out, "hash-20260101T000000Z")
+        self.assertEqual(len(saved["notes"]), len(saved["batches"]))
+        calls = []
+        with mock.patch.object(llm, "ask", self.fake_ask(calls=calls)):
+            path = research.resume("hash-20260101T000000Z", provider="claude", out_dir=self.out)
+        self.assertEqual(calls, [("claude", "final")], "only the final write should run again")
+        self.assertEqual(json.loads(path.read_text())["writer"]["by"], "claude")
+
+    def test_a_call_with_no_answer_is_tried_once_more(self) -> None:
+        import llm
+        answers = iter([llm.ModelError("stopReason cancelled"), GUIDE])
+
+        def ask(provider, **_):
+            answer = next(answers)
+            if isinstance(answer, Exception):
+                raise answer
+            return {"data": json.loads(json.dumps(answer)), "model": "m", "cost": None, "tokens": {}, "seconds": 1}
+
+        with mock.patch.object(llm, "ask", ask):
+            path = research.write(fake_state(), provider="claude", out_dir=self.out)
+        self.assertEqual(json.loads(path.read_text())["writer"]["by"], "claude")
+
+    def test_parts_are_read_at_medium_and_the_guide_at_the_chosen_level(self) -> None:
+        import llm
+        seen = []
+
+        def ask(provider, *, prompt, schema, effort, **_):
+            seen.append(("final" if schema is research.REPORT_SCHEMA else "part", effort))
+            if schema is research.REPORT_SCHEMA:
+                return {"data": json.loads(json.dumps(GUIDE)), "model": "m", "cost": None, "tokens": {}, "seconds": 1}
+            return {"data": {"products": [], "brands": [], "trends": [], "warnings": [], "questions": [], "tips": []},
+                    "model": "m", "cost": None, "tokens": {}, "seconds": 1}
+
+        with mock.patch.object(llm, "ask", ask):
+            research.write(fake_state(2), provider="claude", effort="xhigh", out_dir=self.out)
+        self.assertEqual(sorted(seen), [("final", "xhigh"), ("part", "medium"), ("part", "medium")])
+        seen.clear()
+        with mock.patch.object(llm, "ask", ask):
+            research.write(fake_state(2), provider="claude", effort="xhigh", light_reading=False, out_dir=self.out)
+        self.assertEqual(sorted(seen), [("final", "xhigh"), ("part", "xhigh"), ("part", "xhigh")])
+
+    def test_a_failed_condensing_group_is_trimmed_not_fatal(self) -> None:
+        import llm
+        text = "## Notes\n" + "".join(f"- PRODUCT B{i} | N | ref - | k | tone positive | ~{i} people | threads t1\n    · {'x' * 900}\n"
+                                       for i in range(60))
+        trimmed = research.trim_notes(text, 5000)
+        self.assertLessEqual(len(trimmed.encode()), 5100)
+        self.assertIn("B59", trimmed)          # most-discussed kept
+        self.assertNotIn("B0 |", trimmed)      # least-discussed dropped
 
     def test_checkpoint_names_are_checked(self) -> None:
         self.assertIsNone(research.read_checkpoint(self.out, "../../etc/passwd"))

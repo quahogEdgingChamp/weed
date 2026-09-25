@@ -63,6 +63,7 @@
     brandSort: "tier",
     table: { key: "score", asc: false },
     resizeTimer: null,
+    lightReading: true,
     listView: "active",
     listSort: "newest",
   };
@@ -79,6 +80,7 @@
         if ([...WRITERS, "none"].includes(saved.provider)) ui.provider = saved.provider;
         if (["quick", "standard", "deep"].includes(saved.depth)) ui.depth = saved.depth;
         if (typeof saved.listSort === "string") ui.listSort = saved.listSort;
+        if (typeof saved.lightReading === "boolean") ui.lightReading = saved.lightReading;
         for (const p of WRITERS) {
           const c = saved.choice && saved.choice[p];
           if (c && typeof c === "object") {
@@ -93,7 +95,7 @@
 
   function savePrefs() {
     try {
-      window.localStorage.setItem(PREFS_KEY, JSON.stringify({ provider: ui.provider, depth: ui.depth, choice: ui.choice, listSort: ui.listSort }));
+      window.localStorage.setItem(PREFS_KEY, JSON.stringify({ provider: ui.provider, depth: ui.depth, choice: ui.choice, listSort: ui.listSort, lightReading: ui.lightReading }));
     } catch (error) {
       /* Not remembered; nothing else depends on it. */
     }
@@ -487,6 +489,13 @@
             ? "Higher thinks longer: better judgement, slower, more usage."
             : "This model has no thinking setting."
         )}</p>
+        ${
+          ["high", "xhigh", "max", "ultra"].includes(c.effort)
+            ? `<label class="rs-check rs-light"><input type="checkbox" id="rs-light" ${ui.lightReading ? "checked" : ""} />
+                Read the evidence at medium thinking, and use ${esc(c.effort)} only for writing the guide</label>
+              <p class="rs-hint">${ui.lightReading ? "Much faster and lighter on your plan; the guide still gets full thinking." : "Every part at " + esc(c.effort) + ": slow (Grok took 7–20 min per part at xhigh), and heavy on your plan."}</p>`
+            : ""
+        }
       </div>`;
   }
 
@@ -572,8 +581,11 @@
         <ul class="rs-log" aria-live="polite">${log.map((line) => `<li>${esc(line.message)}</li>`).join("")}</ul>
         ${
           job.status === "paused"
-            ? `<p class="rs-paused-note">${esc(job.error || "Paused.")} Everything read so far is saved: continue
-                once the limit resets, or finish now with another writer or model picked under “Who writes the guide”.</p>`
+            ? `<p class="rs-paused-note">${esc(job.error || "Paused.")} Everything read so far is saved: ${
+                /limit/i.test(job.error || "")
+                  ? "continue once the limit resets, or finish now with another writer or model"
+                  : "try again, or finish with another writer or model"
+              } picked under “Who writes the guide”.</p>`
             : job.error
               ? `<p class="rs-error">${esc(job.error)}</p>`
               : ""
@@ -622,7 +634,9 @@
         ? `${PROVIDER_LABEL[c.provider] || "The writer"} hit its usage limit${c.resets ? `; resets ${c.resets}` : ""}`
         : c.status === "stopped"
           ? "Stopped by you"
-          : "Interrupted (the server restarted mid-run)";
+          : c.status === "failed"
+            ? c.reason || "The writer couldn't finish"
+            : "Interrupted (the server restarted mid-run)";
     box.innerHTML = `<section class="rs-saved" aria-labelledby="rs-paused-heading">
       <h2 id="rs-paused-heading" class="rs-h2">Waiting to continue</h2>
       <ul class="rs-report-list">${runs
@@ -646,7 +660,7 @@
     try {
       const { job } = await api(`${API}/resume`, {
         method: "POST",
-        body: JSON.stringify({ checkpoint, provider, model, effort }),
+        body: JSON.stringify({ checkpoint, provider, model, effort, lightReading: ui.lightReading }),
       });
       ui.overview.job = job;
       ui.watchedJob = job.id;
@@ -807,6 +821,7 @@
           llm: provider !== "none",
           model: provider === "none" ? "" : currentModel(provider),
           effort: provider === "none" ? "" : ui.choice[provider].effort,
+          lightReading: ui.lightReading,
         }),
       });
       ui.overview.job = job;
@@ -2009,7 +2024,12 @@
     if (t.id === "rs-effort") {
       ui.choice[ui.provider].effort = t.value;
       savePrefs();
-      return undefined;
+      return redrawModels();
+    }
+    if (t.id === "rs-light") {
+      ui.lightReading = t.checked;
+      savePrefs();
+      return redrawModels();
     }
     if (t.id === "rs-bq" || t.id === "rs-bsort") {
       if (t.id === "rs-bq") ui.brandQuery = t.value;

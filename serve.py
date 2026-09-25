@@ -669,7 +669,7 @@ def make_handler(site_dir: Path, data_path: Path, backup_dir: Path, research_dir
             model = body.get("model") if isinstance(body.get("model"), str) else ""
             effort = body.get("effort") if isinstance(body.get("effort"), str) else ""
             try:
-                job = jobs.resume(body["checkpoint"], provider or "none", model, effort)
+                job = jobs.resume(body["checkpoint"], provider or "none", model, effort, body.get("lightReading") is not False)
             except ValueError as error:
                 self.send_json({"error": str(error)}, status=400)
                 return
@@ -705,7 +705,7 @@ def make_handler(site_dir: Path, data_path: Path, backup_dir: Path, research_dir
             model = body.get("model") if isinstance(body.get("model"), str) else ""
             effort = body.get("effort") if isinstance(body.get("effort"), str) else ""
             try:
-                job = jobs.start(topic, query[:120], depth, provider, model, effort)
+                job = jobs.start(topic, query[:120], depth, provider, model, effort, body.get("lightReading") is not False)
             except ValueError as error:
                 self.send_json({"error": str(error)}, status=400)
                 return
