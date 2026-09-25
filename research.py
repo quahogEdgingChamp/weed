@@ -1334,7 +1334,7 @@ def gather(topic_key: str, query: str = "", *, depth: str = "quick", subreddits:
     for index, post in enumerate(chosen, 1):
         comments[post["id"]] = thread_comments(post, cache_dir, cancel, logger("threads"))
         if index % 5 == 0 or index == len(chosen):
-            report("threads", f"Fetched {index} of {len(chosen)} threads", threads_fetched=index,
+            report("threads", f"Fetched {index} of {len(chosen)} threads", threads_fetched=index, threads_total=len(chosen),
                    comments_fetched=sum(len(v) for v in comments.values()))
 
     # Deep: comments elsewhere that name this category's most-discussed brands.
@@ -1348,9 +1348,11 @@ def gather(topic_key: str, query: str = "", *, depth: str = "quick", subreddits:
         loose = topic.get("loose_regex")
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         seen: set[str] = set()
+        searches = len(names) * len(subreddits)
         for n, name in enumerate(names, 1):
-            for sub in subreddits:
-                report("threads", f"Searching r/{sub} for comments naming {name} ({n} of {len(names)})")
+            for s_index, sub in enumerate(subreddits):
+                report("threads", f"Searching r/{sub} for comments naming {name} ({n} of {len(names)})",
+                       searches_done=(n - 1) * len(subreddits) + s_index, searches_total=searches)
                 for c in search_brand_comments(sub, name, after, cache_dir, cancel, logger("threads")):
                     tid = str(c.get("link_id") or "").removeprefix("t3_")
                     body = c.get("body") or ""
@@ -1527,6 +1529,82 @@ def fit_for_limit(state: dict[str, Any], limit: int, report: Callable[..., None]
            parts=len(state["batches"]), parts_done=len(state["notes"]))
 
 
+# ── Timing: how long parts and final writes take, per writer/model/level ──
+
+TIMING_KEEP = 30
+_timing_lock = threading.Lock()
+
+
+def timing_key(provider: str, model: str, effort: str) -> str:
+    return f"{provider}|{model or 'default'}|{effort or 'default'}"
+
+
+def record_timing(out_dir: Path, key: str, kind: str, seconds: float) -> None:
+    """Remember how long one call took ("part" or "final"), newest last."""
+    path = out_dir / "cache" / "timing.json"
+    with _timing_lock:
+        data = read_cache(path, 10 * 365 * 86400) or {}
+        row = data.setdefault(key, {}).setdefault(kind, [])
+        row.append(round(seconds, 1))
+        del row[:-TIMING_KEEP]
+        write_json(path, data)
+
+
+def typical_timing(out_dir: Path, key: str, kind: str) -> float | None:
+    """Median seconds for this kind of call with this writer, if it has been timed."""
+    data = read_cache(out_dir / "cache" / "timing.json", 10 * 365 * 86400) or {}
+    values = sorted((data.get(key) or {}).get(kind) or [])
+    return values[len(values) // 2] if values else None
+
+
+def estimate_seconds(job: dict[str, Any], now: float) -> dict[str, Any] | None:
+    """Time left for a running job, from this run's own pace when it has one,
+    else from past runs with the same writer. None when there's no basis."""
+    counts = job.get("counts") or {}
+    stage = job.get("stage")
+    started = job.get("stageStarted") or {}
+    typical_part = counts.get("typical_part")
+    typical_final = counts.get("typical_final")
+    done_parts = job.get("partSeconds") or []
+    per_part = sorted(done_parts)[len(done_parts) // 2] if done_parts else typical_part
+    parallel = max(int(counts.get("parallel") or 3), 1)
+
+    def writing_left(parts_left: int) -> float | None:
+        final = typical_final or (per_part * 1.3 if per_part else None)
+        if parts_left and per_part is None:
+            return None
+        return math.ceil(parts_left / parallel) * (per_part or 0) + (final or 0) if (per_part or final) else None
+
+    if stage == "threads":
+        fetched, total = counts.get("threads_fetched") or 0, counts.get("threads_total") or 0
+        since = started.get("threads")
+        if not (fetched and total) or since is None:
+            return None
+        fetch_left = (now - since) / fetched * max(total - fetched, 0)
+        searched, searches = counts.get("searches_done") or 0, counts.get("searches_total") or 0
+        search_since = started.get("searches")
+        if searches and search_since is not None:
+            # Deep's brand search: each search is slow and uneven; ~10 s until measured.
+            pace = (now - search_since) / searched if searched else 10
+            fetch_left += pace * max(searches - searched, 0)
+        write = writing_left(counts.get("parts") or 0) if job.get("llm") else 0
+        return {"seconds": round(fetch_left + (write or 0)), "basis": "fetch pace so far" +
+                ("" if write is None else " and past runs")}
+    if stage == "write":
+        parts, done = counts.get("parts") or 0, counts.get("parts_done") or 0
+        if parts and done < parts:
+            left = writing_left(parts - done)
+            if left is None:
+                return None
+            return {"seconds": round(left), "basis": f"from {len(done_parts)} parts so far" if done_parts else "from past runs"}
+        final = typical_final or (per_part * 1.3 if per_part else None)
+        if final is None:
+            return None
+        since = started.get("final") or started.get("write") or now
+        return {"seconds": max(round(final - (now - since)), 30), "basis": "from past runs" if typical_final else "from the parts"}
+    return None
+
+
 RETRY_NOTE = """
 
 IMPORTANT: everything you need is in this message; nothing more is coming and there is nothing to look up.
@@ -1623,6 +1701,7 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
     if limit:
         fit_for_limit(state, limit, report, who)
     part_head = state["slimHead"] if limit else state["head"]
+    key = timing_key(provider, model, effort)
     batches = state["batches"]
     notes: dict[str, Any] = state["notes"]
     usage = state["usage"]
@@ -1649,7 +1728,9 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
         try:
             if batches:
                 todo = [i for i in range(1, len(batches) + 1) if str(i) not in notes]
-                report("write", f"{len(batches)} parts in all", parts=len(batches), parts_done=len(notes))
+                report("write", f"{len(batches)} parts in all", parts=len(batches), parts_done=len(notes),
+                       parallel=settings.get("parallel", 3), typical_part=typical_timing(out_dir, key, "part"),
+                       typical_final=typical_timing(out_dir, key, "final"))
                 if len(todo) < len(batches):
                     report("write", f"{len(batches) - len(todo)} of {len(batches)} parts were already read; "
                                     f"reading the other {len(todo)}")
@@ -1658,15 +1739,19 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
                     prompt = (NOTES_INSTRUCTIONS.format(part=index, parts=len(batches), label=topic["label"])
                               + (TIGHT_NOTES if limit else "") + part_head
                               + "\n## Threads in this part\n\n" + batches[index - 1]["text"])
+                    part_started = time.monotonic()
                     result = ask_checked(provider, prompt=prompt, schema=NOTES_SCHEMA, model=model, effort=effort,
                                          cancel=cancel, log=logger("write"), timeout=1500,
                                          label=f"{who} (part {index})", spend=spend, lock=lock,
                                          empty=lambda data: batches[index - 1]["comments"] >= 5 and notes_empty(data))
+                    took = time.monotonic() - part_started
+                    record_timing(out_dir, key, "part", took)
                     with lock:
                         notes[str(index)] = {"data": result["data"], "by": f"{who} ({result['model']})"}
                         save("running")
                         report("write", f"{who} finished reading part {index} of {len(batches)} "
-                                        f"({len(notes)} done)", parts_done=len(notes))
+                                        f"({len(notes)} done, {took / 60:.1f} min)", parts_done=len(notes),
+                               part_seconds=round(took))
 
                 if todo:
                     report("write", f"{who} is reading {len(todo)} parts, {settings.get('parallel', 3)} at a time")
@@ -1709,8 +1794,11 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
                                 f"({len(packet) // 1000}k characters)")
             else:
                 packet = state["packet"]
-                report("write", f"{who} is reading the threads and writing the guide (a few minutes)")
+                report("write", f"{who} is reading the threads and writing the guide (a few minutes)",
+                       typical_final=typical_timing(out_dir, key, "final"))
 
+            report("write", f"{who} is writing the guide", final_started=True)
+            final_started = time.monotonic()
             result = ask_checked(provider,
                                  prompt=INSTRUCTIONS.format(label=topic["label"], focus=topic["focus"],
                                                             n_products={"quick": "12–20", "standard": "18–30",
@@ -1720,6 +1808,7 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
                                  empty=lambda data: not data.get("products"))
             guide = result["data"]
             final_model = result["model"]
+            record_timing(out_dir, key, "final", time.monotonic() - final_started)
         except llm.LimitError as error:
             resets = error.resets
             done = f" after {len(notes)} of {len(batches)} parts" if batches else ""
@@ -1926,7 +2015,11 @@ class Jobs:
         with self.lock:
             if self.job is None:
                 return None
-            return {**self.job, "log": list(self.job["log"][-80:]), "counts": dict(self.job["counts"])}
+            snapshot = {**self.job, "log": list(self.job["log"][-80:]), "counts": dict(self.job["counts"])}
+            snapshot["estimate"] = estimate_seconds(self.job, time.time()) if self.job["status"] == "running" else None
+            snapshot.pop("partSeconds", None)
+            snapshot.pop("stageStarted", None)
+            return snapshot
 
     def busy(self) -> bool:
         return bool(self.job and self.job["status"] == "running")
@@ -1996,7 +2089,15 @@ class Jobs:
             if "checkpoint" in counts:
                 self.job["checkpoint"] = counts.pop("checkpoint")
             counts.pop("report", None)
+            starts = self.job.setdefault("stageStarted", {})
+            if counts.pop("final_started", None):
+                starts["final"] = time.time()
+            if "searches_total" in counts:
+                starts.setdefault("searches", time.time())
+            if "part_seconds" in counts:
+                self.job.setdefault("partSeconds", []).append(counts.pop("part_seconds"))
             if stage not in ("paused",):
+                starts.setdefault(stage, time.time())
                 self.job["stage"] = stage
             self.job["counts"].update(counts)
             self.job["log"].append({"at": now_iso(), "stage": stage, "message": message})

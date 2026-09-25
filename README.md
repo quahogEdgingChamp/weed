@@ -88,6 +88,9 @@ dependencies.
   volume, brand mention sparklines; each card links to OCS, store prices and
   the latest posts, and adds straight to the shopping list (and says if it's
   already in your collection, with your rating)
+- While a run goes, the progress panel says roughly how long is left: from
+  this run's own pace once parts finish, before that from past runs with the
+  same writer, model and thinking level (`research/cache/timing.json`)
 - Guides are saved and can be reopened, re-run, archived or deleted; the
   list sorts by date, topic, depth, comments read or product count, with
   separate Active and Archived views

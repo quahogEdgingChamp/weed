@@ -5405,3 +5405,13 @@ p.rs-solo {
   white-space: normal;
   text-align: left;
 }
+
+.rs-eta {
+  margin-top: 4px;
+  font-size: 0.92rem;
+}
+
+.rs-eta strong {
+  color: var(--accent-ink);
+  font-family: var(--display);
+}

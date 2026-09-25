@@ -161,6 +161,15 @@
     }`;
   }
 
+  function timeLeft(seconds) {
+    if (seconds < 60) return "under a minute";
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `about ${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    return `about ${hours} h${rest ? ` ${rest} min` : ""}`;
+  }
+
   function num(n) {
     return Number(n || 0).toLocaleString();
   }
@@ -526,6 +535,15 @@
                 ? `${PROVIDER_LABEL[job.provider || "claude"] || "Claude"} writes the guide${job.model ? ` (${job.model}${job.effort ? `, ${job.effort}` : ""})` : ""}`
                 : "counts only"
             )} · ${elapsed(job.startedAt, job.finishedAt)}</p>
+            ${
+              job.status === "running"
+                ? `<p class="rs-eta">${
+                    job.estimate
+                      ? `<strong>${esc(timeLeft(job.estimate.seconds))} left</strong> <span class="rs-hint">${esc(job.estimate.basis)}</span>`
+                      : `<span class="rs-hint">Working out how long this will take…</span>`
+                  }</p>`
+                : ""
+            }
           </div>
           ${
             job.status === "running"

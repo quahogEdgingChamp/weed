@@ -481,6 +481,51 @@ class PauseTest(unittest.TestCase):
         self.assertFalse(research.delete_checkpoint(self.out, "../x"))
 
 
+class EstimateTest(unittest.TestCase):
+    def job(self, **counts):
+        return {"stage": "write", "llm": True, "counts": counts, "stageStarted": {}, "partSeconds": []}
+
+    def test_uses_this_runs_pace_once_parts_finish(self) -> None:
+        job = self.job(parts=29, parts_done=12, parallel=3, typical_part=None, typical_final=None)
+        job["partSeconds"] = [600, 700, 800]
+        estimate = research.estimate_seconds(job, 0)
+        # 17 parts left, 3 at a time -> 6 rounds of the 700 s median, plus a final at 1.3x.
+        self.assertEqual(estimate["seconds"], 6 * 700 + round(700 * 1.3))
+        self.assertIn("3 parts so far", estimate["basis"])
+
+    def test_falls_back_to_past_runs(self) -> None:
+        job = self.job(parts=10, parts_done=0, parallel=3, typical_part=100, typical_final=200)
+        self.assertEqual(research.estimate_seconds(job, 0), {"seconds": 4 * 100 + 200, "basis": "from past runs"})
+
+    def test_no_basis_means_no_guess(self) -> None:
+        self.assertIsNone(research.estimate_seconds(self.job(parts=10, parts_done=0), 0))
+
+    def test_single_call_counts_down(self) -> None:
+        job = self.job(typical_final=300)
+        job["stageStarted"] = {"final": 1000}
+        self.assertEqual(research.estimate_seconds(job, 1100)["seconds"], 200)
+
+    def test_fetching_adds_fetch_pace(self) -> None:
+        job = {"stage": "threads", "llm": False, "counts": {"threads_fetched": 50, "threads_total": 150},
+               "stageStarted": {"threads": 0}}
+        self.assertEqual(research.estimate_seconds(job, 100)["seconds"], 200)
+
+    def test_brand_search_time_is_counted(self) -> None:
+        job = {"stage": "threads", "llm": False, "counts": {"threads_fetched": 100, "threads_total": 100,
+               "searches_done": 4, "searches_total": 24}, "stageStarted": {"threads": 0, "searches": 100}}
+        # 4 searches in 60 s -> 15 s each, 20 left.
+        self.assertEqual(research.estimate_seconds(job, 160)["seconds"], 300)
+
+    def test_timing_history_is_kept_per_writer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            key = research.timing_key("grok", "grok-4.7", "xhigh")
+            for seconds in (300, 900, 600):
+                research.record_timing(out, key, "part", seconds)
+            self.assertEqual(research.typical_timing(out, key, "part"), 600)
+            self.assertIsNone(research.typical_timing(out, research.timing_key("claude", "", ""), "part"))
+
+
 class ServerResearchTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
