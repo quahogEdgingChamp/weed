@@ -942,6 +942,8 @@
     "unitPrice-asc": (a, b) => compareMissingLast(unitPrice(a)?.value ?? null, unitPrice(b)?.value ?? null, 1),
     "name-asc": () => 0,
     "updated-desc": (a, b) => compareMissingLast(a.updatedAt, b.updatedAt, -1),
+    "duel-desc": (a, b) =>
+      compareMissingLast(a.duelGames ? a.duelRating : null, b.duelGames ? b.duelRating : null, -1),
   };
 
   function sortEntries(entries, sortBy) {
@@ -1233,6 +1235,72 @@
     return groups;
   }
 
+  /* ── Duel: rank products by picking the better of two ─────────────────
+
+     Each pick is an Elo match: K = 40 for a product's first 10 duels, then
+     24, from 1500. A product is ranked, not a purchase: repeat purchases
+     share one score (duelRating / duelGames on each of its records). Pairs
+     favour the same type, close scores and products with few duels, so the
+     order sharpens quickly. */
+
+  const DUEL_START = 1500;
+
+  function duelKey(entry) {
+    return entry.productKey || entry.id;
+  }
+
+  function duelStandings(entries) {
+    const groups = new Map();
+    for (const entry of entries || []) {
+      const key = duelKey(entry);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(entry);
+    }
+    return [...groups.entries()].map(([key, group]) => {
+      const scored = group.filter((entry) => typeof entry.duelRating === "number" && entry.duelGames > 0);
+      const best = scored.sort((a, b) => b.duelGames - a.duelGames)[0];
+      const latest = [...group].sort((a, b) => String(b.purchaseDate || "").localeCompare(String(a.purchaseDate || "")))[0];
+      return {
+        key,
+        entry: latest,
+        ids: group.map((entry) => entry.id),
+        rating: best ? best.duelRating : DUEL_START,
+        games: best ? best.duelGames : 0,
+      };
+    });
+  }
+
+  function pickDuel(entries, { random = Math.random, last = null } = {}) {
+    const rows = duelStandings(entries);
+    if (rows.length < 2) return null;
+    const weights = rows.map((row) => 1 / (1 + row.games) ** 2);
+    let roll = random() * weights.reduce((sum, w) => sum + w, 0);
+    let first = rows[rows.length - 1];
+    for (let i = 0; i < rows.length; i += 1) {
+      roll -= weights[i];
+      if (roll <= 0) {
+        first = rows[i];
+        break;
+      }
+    }
+    const others = rows.filter((row) => row.key !== first.key);
+    const sameType = others.filter((row) => row.entry.type === first.entry.type);
+    const pool = sameType.length ? sameType : others;
+    const repeat = (row) => last && [first.key, row.key].sort().join("|") === [...last].sort().join("|");
+    const cost = (row) => Math.abs(row.rating - first.rating) / 100 + row.games * 0.3 + random() * 1.5 + (repeat(row) ? 100 : 0);
+    const second = [...pool].sort((a, b) => cost(a) - cost(b))[0];
+    return random() < 0.5 ? [first, second] : [second, first];
+  }
+
+  function duelOutcome(winner, loser) {
+    const expected = 1 / (1 + 10 ** ((loser.rating - winner.rating) / 400));
+    const k = (games) => (games < 10 ? 40 : 24);
+    return {
+      winner: { rating: Math.round((winner.rating + k(winner.games) * (1 - expected)) * 10) / 10, games: winner.games + 1 },
+      loser: { rating: Math.round((loser.rating - k(loser.games) * (1 - expected)) * 10) / 10, games: loser.games + 1 },
+    };
+  }
+
   return {
     SCHEMA_VERSION,
     TYPE_LABELS,
@@ -1288,5 +1356,10 @@
     terpeneInfo,
     awaitingRating,
     foldLog,
+    DUEL_START,
+    duelKey,
+    duelStandings,
+    pickDuel,
+    duelOutcome,
   };
 });

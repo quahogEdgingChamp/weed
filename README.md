@@ -41,6 +41,16 @@ dependencies.
 - **Log purchase** opens the form prefilled; saving moves the item into the
   collection, cancelling leaves it on the list
 
+**Duel**
+
+- Insights → **Your ranking** → **Duel**: two products side by side; pick
+  the one you'd rather have again (tap, or ← / →), ↓ for a new pair, U to
+  undo. Each pick is an Elo match (K 40 for a product's first 10 duels,
+  then 24, from 1500); pairs favour the same type, close scores and
+  products with few duels. Repeat purchases share one score. The ranking
+  shows in Insights and as the Collection sort "Your duel ranking", and
+  syncs with everything else (`duelRating` / `duelGames` on each purchase)
+
 **Insights**
 
 - Monthly spend with an optional budget, rating distribution, favorites by

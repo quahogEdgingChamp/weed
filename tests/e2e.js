@@ -322,6 +322,29 @@ function plantResearchQueue() {
     check((await page.textContent("#value-list")).includes("Lemon Haze"), "value per gram lists gram-priced entries");
     await page.screenshot({ path: path.join(SHOTS, "desktop-insights.png"), fullPage: true });
 
+    step("Duel");
+    check(await page.isVisible("#duel-list >> text=No duels yet"), "no ranking before any duel");
+    await page.click("#duel-button");
+    await page.waitForSelector(".duel-card");
+    const winner = (await page.textContent(".duel-card[data-side='0'] .duel-name")).trim();
+    await page.keyboard.press("ArrowLeft");
+    await page.waitForSelector(".duel-count >> text=1 pick this time");
+    await page.click(".duel-card[data-side='1']");
+    await page.click(".duel-tools >> text=Undo");
+    await page.waitForSelector(".duel-count >> text=1 pick this time");
+    await page.screenshot({ path: path.join(SHOTS, "desktop-duel.png") });
+    await page.click("#dialog .dialog-foot >> text=Done");
+    check(await waitFor(() => page.isVisible("text=1 pick saved to your ranking.")), "the picks are saved");
+    const ranked = await page.$$eval("#duel-list tbody tr", (rows) => rows.map((row) => row.cells[1].textContent.trim()));
+    check(ranked.length === 2 && ranked[0] === winner, `the winner of the one kept pick ranks first (${ranked.join(", ")})`);
+    await synced(page);
+    const stored = readData().products.filter((entry) => entry.duelGames);
+    check(stored.length >= 2 && stored.every((entry) => typeof entry.duelRating === "number"), "scores sync to the server");
+    await page.click(".tab[data-view=collection]");
+    await page.selectOption("#sort-by", "duel-desc");
+    check((await page.textContent("button.name-link >> nth=0")).trim() === winner, "the collection sorts by duel rank");
+    await page.selectOption("#sort-by", "purchaseDate-desc");
+
     step("Privacy mode");
     await page.click(".tab[data-view=collection]");
     await page.click("#privacy-button");

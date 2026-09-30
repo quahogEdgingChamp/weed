@@ -204,3 +204,32 @@ test("a run log folds repeated progress and marks problems", () => {
   assert.equal(groups[0].items[1].warning, true);
   assert.equal(groups[1].items[0].warning, false);
 });
+
+test("duel: repeat purchases share one score, pairs stay within a type", () => {
+  const entries = [
+    { id: "a1", name: "A", type: "vape", productKey: "a", purchaseDate: "2026-01-01", duelRating: 1540, duelGames: 3 },
+    { id: "a2", name: "A", type: "vape", productKey: "a", purchaseDate: "2026-05-01", duelRating: 1540, duelGames: 3 },
+    { id: "b", name: "B", type: "vape" },
+    { id: "c", name: "C", type: "edible" },
+  ];
+  const rows = Core.duelStandings(entries);
+  assert.deepEqual(rows.map((r) => [r.key, r.ids.length, r.rating, r.games]), [["a", 2, 1540, 3], ["b", 1, 1500, 0], ["c", 1, 1500, 0]]);
+  assert.equal(rows[0].entry.id, "a2");
+  for (let i = 0; i < 20; i += 1) {
+    const pair = Core.pickDuel(entries);
+    assert.notEqual(pair[0].key, pair[1].key);
+    if (pair.some((row) => row.key === "a")) assert.ok(pair.every((row) => row.entry.type === "vape"), "A only meets the other vape");
+  }
+  assert.equal(Core.pickDuel(entries.slice(0, 2)), null);
+});
+
+test("duel: Elo moves more for new products and for upsets", () => {
+  const even = Core.duelOutcome({ rating: 1500, games: 0 }, { rating: 1500, games: 0 });
+  assert.deepEqual(even, { winner: { rating: 1520, games: 1 }, loser: { rating: 1480, games: 1 } });
+  const settled = Core.duelOutcome({ rating: 1500, games: 12 }, { rating: 1500, games: 12 });
+  assert.equal(settled.winner.rating, 1512);
+  const upset = Core.duelOutcome({ rating: 1400, games: 12 }, { rating: 1600, games: 12 });
+  assert.ok(upset.winner.rating - 1400 > 12);
+  const sorted = Core.sortEntries([{ name: "x", duelRating: 1600, duelGames: 2 }, { name: "y" }, { name: "z", duelRating: 1450, duelGames: 1 }], "duel-desc");
+  assert.deepEqual(sorted.map((e) => e.name), ["x", "z", "y"]);
+});

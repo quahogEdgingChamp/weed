@@ -224,6 +224,7 @@
               <option value="price-desc">Highest price</option>
               <option value="price-asc">Lowest price</option>
               <option value="unitPrice-asc">Best value per gram</option>
+              <option value="duel-desc">Your duel ranking</option>
               <option value="updated-desc">Recently edited</option>
               <option value="name-asc">Name A&ndash;Z</option>
             </select>
@@ -497,6 +498,18 @@
             <h2 id="brands-heading" class="panel-title">Favorites by brand</h2>
             <p class="panel-note">Select a brand to filter the collection.</p>
             <div id="brand-chart" class="bars"></div>
+          </section>
+
+          <section class="card panel span-wide" aria-labelledby="duel-heading">
+            <div class="panel-head">
+              <h2 id="duel-heading" class="panel-title">Your ranking</h2>
+              <button id="duel-button" class="btn btn-primary btn-small" type="button">Duel</button>
+            </div>
+            <p class="panel-note">
+              Pick the better of two products, as often as you like. Each pick is an Elo match, so after a
+              few picks per product this is your real order, finer than star ratings.
+            </p>
+            <div id="duel-list" class="insight-table"></div>
           </section>
 
           <section class="card panel span-wide" aria-labelledby="repurchase-heading">
@@ -773,6 +786,7 @@
     <script src="js/13-shopping.js"></script>
     <script src="js/14-insights.js"></script>
     <script src="js/15-compare.js"></script>
+    <script src="js/15-duel.js"></script>
     <script src="js/16-import.js"></script>
     <script src="js/17-backups.js"></script>
     <script src="js/18-menu.js"></script>

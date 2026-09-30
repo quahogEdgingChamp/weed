@@ -344,6 +344,8 @@ const elements = {
   ratingsNote: $("#ratings-note"),
   brandChart: $("#brand-chart"),
   repurchaseList: $("#repurchase-list"),
+  duelList: $("#duel-list"),
+  duelButton: $("#duel-button"),
   valueList: $("#value-list"),
   valueNote: $("#value-note"),
 

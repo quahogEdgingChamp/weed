@@ -15,6 +15,7 @@ function renderInsights() {
   renderBrands(entries);
   renderRepurchase(entries);
   renderValue(entries);
+  renderDuelRanking(entries);
 }
 
 function renderSpendChart(entries) {

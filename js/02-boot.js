@@ -141,6 +141,7 @@ function initialize() {
   });
 
   setupDiscretion();
+  elements.duelButton.addEventListener("click", openDuel);
 
   elements.privacyButton.addEventListener("click", () => {
     prefs.privacy = !prefs.privacy;
