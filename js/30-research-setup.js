@@ -23,13 +23,18 @@ const TIER_TEXT = {
   C: "Mixed: some love it, many complain",
   AVOID: "The community says skip it",
 };
-const STAGES = [
-  ["catalog", "OCS catalog"],
-  ["reddit", "Scan Reddit"],
-  ["threads", "Read threads"],
-  ["parse", "Parse"],
-  ["write", "Write guide"],
-];
+/* A run's steps, as the server lists them in job.stages: a guide's, or a
+   question's (plan, search, …). */
+const STAGE_LABELS = {
+  catalog: "OCS catalog",
+  reddit: "Scan Reddit",
+  plan: "Plan",
+  search: "Search Reddit",
+  threads: "Read threads",
+  parse: "Parse",
+  write: "Write",
+};
+const GUIDE_STAGES = ["catalog", "reddit", "threads", "parse", "write"];
 const TREND = {
   rising: ["↑", "Rising"],
   falling: ["↓", "Cooling"],
@@ -41,8 +46,10 @@ const TREND = {
 const ui = {
   overview: null,
   overviewError: "",
+  mode: "guide",
   topic: "live-carts",
   query: "",
+  question: "",
   depth: "quick",
   provider: "claude",
   choice: {
@@ -85,6 +92,7 @@ function loadResearchPrefs() {
       if (typeof saved.listSort === "string") ui.listSort = saved.listSort;
       if (typeof saved.lightReading === "boolean") ui.lightReading = saved.lightReading;
       if (typeof saved.autoContinue === "boolean") ui.autoContinue = saved.autoContinue;
+      if (["guide", "question"].includes(saved.mode)) ui.mode = saved.mode;
       for (const p of WRITERS) {
         const c = saved.choice && saved.choice[p];
         if (c && typeof c === "object") {
@@ -99,7 +107,7 @@ function loadResearchPrefs() {
 
 function saveResearchPrefs() {
   try {
-    window.localStorage.setItem(RESEARCH_PREFS_KEY, JSON.stringify({ provider: ui.provider, depth: ui.depth, choice: ui.choice, listSort: ui.listSort, lightReading: ui.lightReading, autoContinue: ui.autoContinue }));
+    window.localStorage.setItem(RESEARCH_PREFS_KEY, JSON.stringify({ provider: ui.provider, depth: ui.depth, choice: ui.choice, listSort: ui.listSort, lightReading: ui.lightReading, autoContinue: ui.autoContinue, mode: ui.mode }));
   } catch (error) {
     /* Not remembered; nothing else depends on it. */
   }

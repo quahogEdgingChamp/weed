@@ -83,7 +83,13 @@ function renderLaunch() {
   const running = o.job && o.job.status === "running";
   const providers = o.providers || {};
   const deepMode = o.depths?.deep?.mode === "batches";
-  const depthNote = {
+  const asking = ui.mode === "question";
+  if (asking && ui.provider === "none") ui.provider = WRITERS.find((p) => providers[p]?.available) || "claude";
+  const depthNote = asking ? {
+    quick: "4 subreddits, the last 2 years · the model reads the ~30 most relevant threads",
+    standard: "6 subreddits, the last 3 years · ~80 threads in one pass",
+    deep: "8 subreddits, the last 5 years · ~200 threads and a comment search, read in parts",
+  }[ui.depth] : {
     quick: `last ${o.depths.quick?.days || 120} days · the model reads the ~30 most relevant threads`,
     standard: `last ${o.depths.standard?.days || 365} days · the model reads ~90 threads in one pass`,
     deep: deepMode
@@ -102,8 +108,19 @@ function renderLaunch() {
 
   box.innerHTML = `
     <section class="card rs-launch" aria-labelledby="rs-new-heading">
-      <h2 id="rs-new-heading" class="panel-title">New research</h2>
-      <fieldset class="rs-topics">
+      <div class="rs-launch-head">
+        <h2 id="rs-new-heading" class="panel-title">New research</h2>
+        <div class="segmented" role="group" aria-label="What kind of research">
+          <button type="button" data-mode="guide" aria-pressed="${!asking}">Product guide</button>
+          <button type="button" data-mode="question" aria-pressed="${asking}">Ask a question</button>
+        </div>
+      </div>
+      ${asking ? `<label class="rs-ask">
+        <span>Ask anything. The writer picks where on Reddit people talk about it, searches there, reads the threads
+        and answers from what people actually report, with their words quoted.</span>
+        <textarea id="rs-question" rows="3" maxlength="300" placeholder="How do live resin carts affect studying? · Is a dry herb vape worth it over joints? · What helps with cotton mouth?">${esc(ui.question)}</textarea>
+      </label>` : ""}
+      <fieldset class="rs-topics" ${asking ? "hidden" : ""}>
         <legend class="sr-only">What to research</legend>
         ${o.topics
           .map(
@@ -115,7 +132,7 @@ function renderLaunch() {
           )
           .join("")}
       </fieldset>
-      <label class="rs-query" ${ui.topic === "custom" ? "" : "hidden"}>
+      <label class="rs-query" ${ui.topic === "custom" && !asking ? "" : "hidden"}>
         <span>What should it look for? Every word has to appear in a post.</span>
         <input id="rs-query" type="text" maxlength="120" placeholder="cold cure rosin, blueberry cart, infused pre-roll…" value="${esc(ui.query)}" />
       </label>
@@ -136,9 +153,9 @@ function renderLaunch() {
           <div class="segmented rs-writers" role="group" aria-labelledby="rs-writer-label">
             ${[...WRITERS, "none"]
               .map((p) => {
-                const available = p === "none" || providers[p]?.available;
+                const available = p === "none" ? !asking : providers[p]?.available;
                 return `<button type="button" data-provider="${p}" aria-pressed="${ui.provider === p}" ${available ? "" : "disabled"}
-                  ${available ? "" : `title="The ${p} CLI isn't installed on the server"`}>${PROVIDER_LABEL[p]}</button>`;
+                  ${available ? "" : `title="${p === "none" ? "A question needs a model to plan the search and write the answer" : `The ${p} CLI isn't installed on the server`}"`}>${PROVIDER_LABEL[p]}</button>`;
               })
               .join("")}
           </div>
@@ -280,11 +297,13 @@ function renderJob() {
     box.innerHTML = "";
     return;
   }
-  const reached = STAGES.findIndex(([key]) => key === job.stage);
+  const stages = (job.stages || GUIDE_STAGES).map((key) => [key, STAGE_LABELS[key] || key]);
+  const reached = stages.findIndex(([key]) => key === job.stage);
   const counts = job.counts || {};
   const facts = [
     ["posts_scanned", "posts scanned"],
-    ["posts_relevant", "on topic"],
+    ["posts_relevant", job.kind === "question" ? "threads look relevant" : "on topic"],
+    ["searches_done", "searches done"],
     ["threads_fetched", "threads fetched"],
     ["threads_read", "threads fetched"],
     ["comments_fetched", "comments fetched"],
@@ -338,7 +357,7 @@ function renderJob() {
         }
       </div>
       <ol class="rs-steps">
-        ${STAGES.map(([key, label], i) => {
+        ${stages.map(([key, label], i) => {
           let status = i < reached || job.status === "done" ? "done" : i === reached ? "current" : "todo";
           if (i === reached && job.status !== "running" && job.status !== "done") status = "stopped";
           return `<li class="rs-step" data-status="${status}"><span class="rs-step-dot" aria-hidden="true"></span>${label}<span class="sr-only"> (${status})</span></li>`;
@@ -495,7 +514,7 @@ function renderPaused() {
       .map(
         (c) => `<li class="card rs-paused-item">
           <div class="rs-paused-text">
-            <span class="rs-eyebrow">${esc(c.topic?.label || "Research")} · ${esc(c.depth)} · started ${esc(when(c.createdAt))}</span>
+            <span class="rs-eyebrow">${c.kind === "question" ? "Question · " : ""}${esc(c.topic?.label || "Research")} · ${esc(c.depth)} · started ${esc(when(c.createdAt))}</span>
             <span class="rs-report-title">${esc(why(c))}</span>
             <span class="rs-hint">${c.parts ? `${num(c.partsDone)} of ${num(c.parts)} parts read and saved` : "Evidence gathered and saved; the guide isn't written yet"} ·
               was using ${esc(PROVIDER_LABEL[c.provider] || c.provider || "?")}${c.model ? ` (${esc(c.model)})` : ""}</span>
@@ -676,11 +695,12 @@ function reportItem(r) {
   const title = esc(r.headline || r.name);
   return `<li class="card rs-report-item${r.archived ? " is-archived" : ""}">
     <button class="rs-report-open" type="button" data-open="${esc(r.name)}">
-      <span class="rs-eyebrow">${esc(r.topic?.label || "Research")} · ${esc(when(r.createdAt))} · ${esc(r.depth)}${
+      <span class="rs-eyebrow">${r.kind === "question" ? "Question · " : ""}${esc(r.topic?.label || "Research")} · ${esc(when(r.createdAt))} · ${esc(r.depth)}${
         r.archived ? ` · archived${r.archivedAt ? ` ${esc(when(r.archivedAt))}` : ""}` : ""
       }</span>
       <span class="rs-report-title">${esc(r.headline || "Untitled guide")}</span>
-      <span class="rs-hint">${r.products} products · ${num(s.postsScanned)} posts scanned ·
+      ${r.kind === "question" && r.question ? `<span class="rs-hint rs-asked">“${esc(r.question)}”</span>` : ""}
+      <span class="rs-hint">${r.kind === "question" ? `${r.findings} findings` : `${r.products} products`} · ${num(s.postsScanned)} posts ${r.kind === "question" ? "found" : "scanned"} ·
         ${num(s.commentsRead)} comments ${s.threadsFetched != null ? "read" : "fetched"} · ${esc(writtenBy(r.by, r.model, r.effort))}${
           r.readers ? `; parts read by ${esc(Object.entries(r.readers).map(([who, n]) => `${who} ×${n}`).join(", "))}` : ""
         }</span>
@@ -729,7 +749,14 @@ function archiveThisButton() {
   </button>`;
 }
 
-async function startRun({ topic = ui.topic, query = ui.query, depth = ui.depth, provider = ui.provider, now = false } = {}) {
+async function startRun({ topic = ui.mode === "question" ? "question" : ui.topic, query = ui.mode === "question" ? ui.question : ui.query,
+  depth = ui.depth, provider = ui.provider, now = false } = {}) {
+  if (topic === "question" && query.trim().split(/\s+/).length < 3) {
+    ui.startError = "Type your question first: a few words at least.";
+    renderLaunch();
+    qs("#rs-question")?.focus();
+    return;
+  }
   if (topic === "custom" && !query.trim()) {
     ui.startError = "Type what to research first.";
     renderLaunch();

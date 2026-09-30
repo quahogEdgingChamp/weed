@@ -33,6 +33,15 @@ async function onClick(event) {
     }
     return jumpTo(t.dataset.jump);
   }
+  if (t.dataset.mode) {
+    ui.mode = t.dataset.mode;
+    ui.startError = "";
+    saveResearchPrefs();
+    renderLaunch();
+    if (ui.mode === "question") qs("#rs-question")?.focus();
+    return undefined;
+  }
+  if (t.dataset.ask) return askAbout(t.dataset.ask);
   if (t.dataset.depth) {
     ui.depth = t.dataset.depth;
     saveResearchPrefs();
@@ -83,6 +92,12 @@ async function onClick(event) {
       await api(`${API}/cancel`, { method: "POST", body: "{}" }).catch(() => {});
       return undefined;
     case "rerun": {
+      if (ui.report.kind === "question") {
+        ui.mode = "question";
+        ui.question = ui.report.question || "";
+        ui.depth = ui.report.depth || "quick";
+        return startRun({ topic: "question", query: ui.question, depth: ui.depth });
+      }
       const topic = ui.report.topic;
       ui.topic = topic.key;
       ui.query = topic.query || "";
@@ -128,7 +143,10 @@ async function addToList(button, id) {
   const p = (ui.report.guide.products || []).find((item) => item.id === id);
   if (!p || !window.Cloudline) return;
   button.disabled = true;
-  const note = `${ui.report.topic.label} guide: ${p.tier === "AVOID" ? "Avoid" : `${p.tier} tier`}, ${p.score.toFixed(1)}/10. ${p.verdict}`.slice(0, 1900);
+  const note = (ui.report.kind === "question"
+    ? `From “${ui.report.question}”: ${p.summary || ""}`
+    : `${ui.report.topic.label} guide: ${p.tier === "AVOID" ? "Avoid" : `${p.tier} tier`}, ${p.score.toFixed(1)}/10. ${p.verdict}`
+  ).slice(0, 1900);
   try {
     await window.Cloudline.addResearchPick({
       url: p.ocs?.url || "",
@@ -165,7 +183,11 @@ function onInput(event) {
   const t = event.target;
   /* Text fields react as you type. Their "change" on blur would redraw the
      cards under a click that is already in progress. */
-  if (event.type === "change" && ["rs-q", "rs-bq", "rs-query", "rs-model-custom"].includes(t.id)) return undefined;
+  if (event.type === "change" && ["rs-q", "rs-bq", "rs-query", "rs-question", "rs-model-custom"].includes(t.id)) return undefined;
+  if (t.id === "rs-question") {
+    ui.question = t.value;
+    return;
+  }
   if (t.name === "rs-topic") {
     ui.topic = t.value;
     ui.startError = "";
@@ -233,6 +255,11 @@ function onKey(event) {
     jumpTo(t.dataset.jump);
   }
   if (event.key === "Enter" && t.id === "rs-query") startRun();
+  /* Enter asks; Shift+Enter is a new line. */
+  if (event.key === "Enter" && !event.shiftKey && t.id === "rs-question") {
+    event.preventDefault();
+    startRun();
+  }
 }
 
 /* One tooltip per chart, following the hovered or focused mark. */

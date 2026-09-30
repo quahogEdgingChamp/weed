@@ -195,7 +195,7 @@ class ServerTest(unittest.TestCase):
 
     def test_only_public_files_are_served(self) -> None:
         self.put("", [{"id": "a", "name": "secret"}])
-        for path in ["/", "/index.html", "/js/01-setup.js", "/js/35-research-events.js", "/core.js", "/styles.css", "/sw.js", "/manifest.webmanifest", "/icon.svg"]:
+        for path in ["/", "/index.html", "/js/01-setup.js", "/js/36-research-events.js", "/core.js", "/styles.css", "/sw.js", "/manifest.webmanifest", "/icon.svg"]:
             with self.subTest(path=path):
                 status, _, response = self.request("GET", path)
                 self.assertEqual(status, 200)

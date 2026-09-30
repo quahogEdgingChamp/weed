@@ -17,7 +17,8 @@ async function showReport(name) {
     const { report } = await api(`${API}/reports/${encodeURIComponent(name)}`);
     if (ui.reportName !== name) return;
     ui.report = prepare(report);
-    drawReport();
+    if (report.kind === "question") drawAnswer();
+    else drawReport();
   } catch (error) {
     if (ui.reportName !== name) return;
     researchRoot.innerHTML = `<div class="rs-home"><button class="btn btn-ghost rs-back" type="button" data-home>← All research</button>

@@ -58,6 +58,21 @@ dependencies.
     plus a search for comments naming the category's brands in other threads;
     the model reads it all in parts, takes notes on each, then writes the
     guide from the notes
+- **Ask a question** instead, on any theme at all ("how do live resin carts
+  affect studying?", "is a dry herb vape worth it?", "what helps with
+  cotton mouth?"). The writer plans first: which subreddits people discuss it
+  in, short keyword searches, and what a full answer covers. The server then
+  searches each subreddit (the archive's full-text search, else Reddit's own
+  search) and always reads its newest posts, keeps the threads matching the
+  searches, reads their comments and hands them to the writer. The answer:
+  a short answer with how strong the evidence is, what people report (most
+  common first, with how many said it and verified quotes), what it depends
+  on, disagreements, risks people raise, tips, products named (linked to OCS
+  when they are cannabis products), what the evidence can't tell, and
+  questions to ask next. Quick: 4 subreddits, 2 years, ~30 threads;
+  standard: 6, 3 years, ~80; deep: 8, 5 years, ~200 threads read in parts
+  plus a comment search. A question needs a writer (no counts-only), and
+  pauses, queues and continues like any other run
 - Pick who writes it: **Claude** (the `claude` CLI, your Claude Code plan),
   **Codex** (the `codex` CLI, your ChatGPT plan), **Grok** (the `grok` CLI,
   Grok Build, your SuperGrok / X Premium+ plan) or counts only; pick the
@@ -222,6 +237,7 @@ python3 research.py flower --model sonnet --effort low
 python3 research.py hash --depth deep --provider codex --model gpt-6-sol --effort medium
 python3 research.py rosin --provider grok --model grok-4.7 --effort high
 python3 research.py --resume hash-20260924T182347Z --provider claude   # continue a paused run
+python3 research.py question --query "does a grinder card beat a grinder?" --provider codex
 ```
 
 | Stage | Source | Notes |
@@ -292,11 +308,12 @@ declared twice. A new script needs a line in both.
 | `core.js` | Validation, migration, merge, filters, insights (no DOM) |
 | `js/01-setup.js` … `js/20-start.js` | The page: storage and state, then one file per part (collection, filters, details, form, OCS, terpenes, shopping, insights, backups, menu, sync); `20-start.js` starts it |
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell and install |
-| `js/30-research-*.js` … | The Research tab: setup, home (launcher, progress, queue), guide, products, terpenes, events |
+| `js/30-research-*.js` … | The Research tab: setup, home (launcher, progress, queue), guide, products, terpenes, answer (a question's page), events |
 | `fonts/` | Bricolage Grotesque (headings), self-hosted, SIL OFL |
 | `ocs.py` | Turns an ocs.ca link into fields |
 | `hibuddy.py` | Finds a product's hibuddy.ca page for the price links |
-| `research.py` | Reddit + OCS research runs and the guide writer |
+| `research.py` | Reddit + OCS research runs, the guide writer, the run queue |
+| `ask.py` | Free questions: the plan, the searches, the answer's prompts and file |
 | `llm.py` | Claude / Codex / Grok CLI calls with a JSON schema, and their model lists |
 | `serve.py` | Static files, `/api/state`, `/api/snapshots`, `/api/lookup`, `/api/hibuddy`, `/api/research…` |
 | `tests/` | Server, core and browser tests |

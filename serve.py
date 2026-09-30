@@ -741,7 +741,7 @@ def make_handler(site_dir: Path, data_path: Path, backup_dir: Path, research_dir
             model = body.get("model") if isinstance(body.get("model"), str) else ""
             effort = body.get("effort") if isinstance(body.get("effort"), str) else ""
             try:
-                entry = jobs.new_entry(topic, query[:120], depth, provider, model, effort,
+                entry = jobs.new_entry(topic, query[:300] if topic == "question" else query[:120], depth, provider, model, effort,
                                        body.get("lightReading") is not False, body.get("autoContinue") is not False)
             except ValueError as error:
                 self.send_json({"error": str(error)}, status=400)

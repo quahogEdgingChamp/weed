@@ -150,7 +150,7 @@ function plantResearchQueue() {
 
 (async () => {
   plantResearchQueue();
-  const guide = execFileSync("python3", [path.join(ROOT, "tests", "make_guide.py"), path.join(WORK, "research")], { encoding: "utf8" }).trim();
+  const [guide, answer] = execFileSync("python3", [path.join(ROOT, "tests", "make_guide.py"), path.join(WORK, "research")], { encoding: "utf8" }).trim().split("\n");
   const port = await freePort();
   const server = spawn("python3", [path.join(ROOT, "serve.py"), "--port", String(port), "--data", DATA], { stdio: "ignore" });
   const url = `http://127.0.0.1:${port}/`;
@@ -498,6 +498,33 @@ function plantResearchQueue() {
     check(await gp.isVisible(`[data-open="${guide}"]`), "Back lists it under Saved guides");
     check(gp.errors.length === 0, `guide no script errors (${gp.errors.join(" | ")})`);
     await gp.context().close();
+
+    step("Research: ask a question");
+    const qa = await newPage(browser, `${url}?view=research`);
+    await qa.waitForSelector("#rs-launch [data-mode=question]");
+    await qa.click("#rs-launch [data-mode=question]");
+    await qa.waitForSelector("#rs-question");
+    check(await qa.isHidden(".rs-topics"), "question mode hides the product topics");
+    check(await qa.isDisabled("[data-provider=none]"), "counts only is off for questions");
+    await qa.click("#rs-start");
+    check(await qa.isVisible("text=Type your question first"), "an empty question is caught on the page");
+    await qa.click(`[data-open="${answer}"]`);
+    await qa.waitForSelector(".rs-answer #rs-findings");
+    check(await qa.isVisible("text=How do live resin carts affect studying?"), "the answer shows the question");
+    check(await qa.isVisible(".rs-confidence"), "and how strong the evidence is");
+    check((await qa.$$(".rs-answer .rs-quote")).length === 1, "only the verified quote is shown");
+    check(await qa.isVisible("#rs-risks"), "risks people raise have their own section");
+    await qa.screenshot({ path: path.join(SHOTS, "research-answer.png"), fullPage: true });
+    await qa.click("[data-ask='Does CBD help with focus?']");
+    await qa.waitForSelector("#rs-question");
+    check((await qa.inputValue("#rs-question")) === "Does CBD help with focus?", "Ask next fills in the launcher");
+    check(qa.errors.length === 0, `question no script errors (${qa.errors.join(" | ")})`);
+    await qa.context().close();
+    const qphone = await newPage(browser, `${url}?view=research&report=${encodeURIComponent(answer)}`, { width: 390, height: 844 });
+    await qphone.waitForSelector(".rs-answer #rs-findings");
+    await qphone.screenshot({ path: path.join(SHOTS, "w390-research-answer.png"), fullPage: true });
+    check(await noHorizontalScroll(qphone), "390px answer: no sideways scrolling");
+    await qphone.context().close();
 
     /* ── Layout ────────────────────────────────────────────────────────── */
     step("Layouts");

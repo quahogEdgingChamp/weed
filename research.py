@@ -55,6 +55,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from concurrent.futures import CancelledError as CancelledFuture
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -89,6 +90,7 @@ DEPTHS: dict[str, dict[str, Any]] = {
 }
 
 STAGES = ("catalog", "reddit", "threads", "parse", "write")
+QUESTION_STAGES = ("plan", "search", "threads", "parse", "write")  # ask.py
 
 Cancelled = llm.Cancelled  # one class, so a stop inside a model call is a stop
 
@@ -866,7 +868,8 @@ def build_packet(topic: dict[str, Any], threads: list[dict[str, Any]], comments:
 
 def batch_evidence(threads: list[dict[str, Any]], comments: dict[str, list[dict[str, Any]]],
                    elsewhere: list[tuple[dict[str, Any], list[dict[str, Any]]]], size: int,
-                   comment_chars: int) -> list[dict[str, Any]]:
+                   comment_chars: int,
+                   elsewhere_heading: str = "(from a brand search; only the comments naming a brand) ") -> list[dict[str, Any]]:
     """Cut every thread (and the brand-search finds) into batches of about `size` characters."""
     blocks = []
     for post in threads:
@@ -874,7 +877,7 @@ def batch_evidence(threads: list[dict[str, Any]], comments: dict[str, list[dict[
         blocks.append((text, count, post["id"]))
     for post, found in elsewhere:
         text, count = thread_block(post, found, None, comment_chars, budget=size // 4,
-                                   heading="(from a brand search; only the comments naming a brand) ")
+                                   heading=elsewhere_heading)
         blocks.append((text, count, post["id"]))
 
     batches: list[dict[str, Any]] = []
@@ -1095,7 +1098,10 @@ def verify_quotes(report: dict[str, Any], corpus: dict[str, str], thread_texts: 
     cleaned = {cid: normalise_quote(clean_text(text)) for cid, text in corpus.items()}
     threads = {tid: normalise_quote(clean_text(text)) for tid, text in thread_texts.items()}
     kept, dropped = 0, []
-    for product in report.get("products", []):
+    # Products in a guide; findings, products and the like in an answer.
+    holders = [item for value in report.values() if isinstance(value, list)
+               for item in value if isinstance(item, dict) and isinstance(item.get("quotes"), list)]
+    for product in holders:
         good = []
         for quote in product.get("quotes", []):
             fragments = [normalise_quote(f) for f in re.split(r"\.\.\.|…|\[\.\.\.\]", quote.get("text") or "")]
@@ -1120,7 +1126,7 @@ def verify_quotes(report: dict[str, Any], corpus: dict[str, str], thread_texts: 
                 good.append(quote)
                 kept += 1
             else:
-                dropped.append({"product": product.get("name", ""), "text": (quote.get("text") or "")[:300],
+                dropped.append({"product": product.get("name") or product.get("title") or "", "text": (quote.get("text") or "")[:300],
                                 "thread": quote.get("thread") or "", "comment": quote.get("comment") or ""})
         product["quotes"] = good
     return kept, dropped
@@ -1276,6 +1282,11 @@ def run(topic_key: str, query: str = "", *, depth: str = "quick", provider: str 
     """
     if use_llm is False:
         provider = "none"
+    if topic_key == "question":
+        import ask
+
+        return ask.run(query, depth=depth, provider=provider, model=model, effort=effort, light_reading=light_reading,
+                       out_dir=out_dir, progress=progress, cancel=cancel)
     state = gather(topic_key, query, depth=depth, subreddits=subreddits, out_dir=out_dir, progress=progress,
                    cancel=cancel)
     return write(state, provider=provider, model=model, effort=effort, light_reading=light_reading, out_dir=out_dir,
@@ -1514,14 +1525,16 @@ def cut_blocks(blocks: list[str], budget: int) -> list[dict[str, Any]]:
     return parts
 
 
-def fit_for_limit(state: dict[str, Any], limit: int, report: Callable[..., None], who: str) -> None:
+def fit_for_limit(state: dict[str, Any], limit: int, report: Callable[..., None], who: str,
+                  writing: "Writing | None" = None) -> None:
     """Re-cut the evidence so every prompt fits a writer with a prompt limit.
 
     One-pass runs become parts; parts that are too big (cut for another
     writer, or by an older version) are re-cut. Parts already read are kept.
     """
-    state["slimHead"] = compact_head(state, rows=80)
-    budget = limit - nbytes(NOTES_INSTRUCTIONS) - nbytes(TIGHT_NOTES) - nbytes(state["slimHead"]) - 3000
+    writing = writing or GUIDE
+    state["slimHead"] = writing.compact_head(state, 80)
+    budget = limit - nbytes(writing.notes_prompt(1, 1, state["topic"], True)) - nbytes(state["slimHead"]) - 3000
     if state["mode"] == "single":
         blocks = split_blocks(state["packet"])
         state["batches"] = cut_blocks(blocks, budget)
@@ -1640,7 +1653,7 @@ def notes_empty(data: dict[str, Any]) -> bool:
 def ask_checked(provider: str, *, prompt: str, schema: dict[str, Any], model: str, effort: str,
                 cancel: threading.Event | None, log: Callable[[str], None], timeout: int, label: str,
                 spend: Callable[[dict[str, Any]], None], lock: threading.Lock,
-                empty: Callable[[dict[str, Any]], bool]) -> dict[str, Any]:
+                empty: Callable[[dict[str, Any]], bool], system: str | None = None) -> dict[str, Any]:
     """One model call, retried once if the answer is empty or a placeholder.
 
     An empty answer twice is a failure (ModelError), never a result: a guide
@@ -1649,7 +1662,7 @@ def ask_checked(provider: str, *, prompt: str, schema: dict[str, Any], model: st
     last_error = ""
     for attempt in (1, 2):
         try:
-            result = llm.ask(provider, system=SYSTEM_PROMPT, prompt=prompt + (RETRY_NOTE if attempt == 2 else ""),
+            result = llm.ask(provider, system=system or SYSTEM_PROMPT, prompt=prompt + (RETRY_NOTE if attempt == 2 else ""),
                              schema=schema, model=model, effort=effort, cancel=cancel, log=log, timeout=timeout,
                              label=label)
         except llm.LimitError:
@@ -1692,9 +1705,10 @@ def merge_notes(texts: list[str], *, limit: int, budget: int, provider: str, mod
                 topic: dict[str, Any], part_head: str, cancel: threading.Event | None,
                 logger: Callable[[str], Callable[[str], None]], report: Callable[..., None],
                 spend: Callable[[dict[str, Any]], None], lock: threading.Lock, who: str,
-                parallel: int) -> list[str]:
+                parallel: int, writing: "Writing | None" = None) -> list[str]:
     """Condense notes in rounds until they fit one prompt of `budget` bytes."""
-    group_budget = limit - nbytes(MERGE_INSTRUCTIONS) - nbytes(part_head) - 3000
+    writing = writing or GUIDE
+    group_budget = limit - nbytes(writing.merge_prompt(topic)) - nbytes(part_head) - 3000
     for round_no in range(1, 5):
         if sum(nbytes(t) for t in texts) <= budget:
             return texts
@@ -1710,18 +1724,19 @@ def merge_notes(texts: list[str], *, limit: int, budget: int, provider: str, mod
                         f"(round {round_no}: {len(texts)} → {len(groups)})")
 
         def merge(index: int, group: list[str]) -> str:
-            prompt = MERGE_INSTRUCTIONS.format(label=topic["label"]) + part_head + "\n" + "\n".join(group)
+            prompt = writing.merge_prompt(topic) + part_head + "\n" + "\n".join(group)
             try:
-                result = ask_checked(provider, prompt=prompt, schema=NOTES_SCHEMA, model=model, effort=effort,
+                result = ask_checked(provider, prompt=prompt, schema=writing.notes_schema, model=model, effort=effort,
                                      cancel=cancel, log=logger("write"), timeout=1500,
-                                     label=f"{who} (condensing {index})", spend=spend, lock=lock, empty=notes_empty)
+                                     label=f"{who} (condensing {index})", spend=spend, lock=lock,
+                                     empty=writing.notes_empty, system=writing.system)
             except llm.LimitError:
                 raise
             except llm.ModelError as error:
                 report("write", f"Condensing group {index} failed ({str(error)[:120]}); keeping its most-discussed "
                                 f"products instead")
                 return trim_notes("\n".join(group), max(group_budget // 2, 4000))
-            return notes_text(index, result["data"], compact=True)
+            return writing.notes_text(index, result["data"], True)
 
         with ThreadPoolExecutor(max_workers=parallel) as pool:
             texts = list(pool.map(lambda pair: merge(*pair), enumerate(groups, 1)))
@@ -1743,6 +1758,55 @@ def new_on_ocs(state: dict[str, Any], days: int = 90) -> list[dict[str, Any]]:
              "mentions": talked.get(brand_key(r["brand"]), 0)} for r in rows[:24]]
 
 
+@dataclass(frozen=True)
+class Writing:
+    """What the model is asked and what gets saved: a product guide (GUIDE,
+    below) or an answer to a free question (ask.py). `write` does the rest
+    the same way for both: parts, checkpoints, limits, quotes, timing."""
+
+    system: str
+    depths: dict[str, dict[str, Any]]
+    notes_prompt: Callable[[int, int, dict[str, Any], bool], str]  # (part, parts, topic, tight)
+    notes_schema: dict[str, Any]
+    notes_text: Callable[[int, dict[str, Any], bool], str]  # (part, notes, compact)
+    notes_empty: Callable[[dict[str, Any]], bool]
+    merge_prompt: Callable[[dict[str, Any]], str]
+    reduce_note: str
+    final_prompt: Callable[[dict[str, Any], str], str]  # (state, packet)
+    final_schema: dict[str, Any]
+    final_empty: Callable[[dict[str, Any]], bool]
+    compact_head: Callable[[dict[str, Any], int], str]
+    prepare: Callable[..., None] | None = None  # gathers the evidence with the model's help
+    document: Callable[..., dict[str, Any]] | None = None  # the saved file; None = the guide's
+
+
+GUIDE = Writing(
+    system=SYSTEM_PROMPT,
+    depths=DEPTHS,
+    notes_prompt=lambda part, parts, topic, tight: (NOTES_INSTRUCTIONS.format(part=part, parts=parts, label=topic["label"])
+                                                    + (TIGHT_NOTES if tight else "")),
+    notes_schema=NOTES_SCHEMA,
+    notes_text=lambda index, notes, compact: notes_text(index, notes, compact=compact),
+    notes_empty=notes_empty,
+    merge_prompt=lambda topic: MERGE_INSTRUCTIONS.format(label=topic["label"]),
+    reduce_note=REDUCE_NOTE,
+    final_prompt=lambda state, packet: INSTRUCTIONS.format(
+        label=state["topic"]["label"], focus=state["topic"]["focus"],
+        n_products={"quick": "12–20", "standard": "18–30", "deep": "25–45"}[state["depth"]]) + packet,
+    final_schema=REPORT_SCHEMA,
+    final_empty=lambda data: not data.get("products"),
+    compact_head=lambda state, rows: compact_head(state, rows=rows),
+)
+
+
+def writing_for(state: dict[str, Any]) -> Writing:
+    if state.get("kind") == "question":
+        import ask  # imports this module, so only when needed
+
+        return ask.WRITING
+    return GUIDE
+
+
 def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str = "", light_reading: bool = True,
           out_dir: Path, progress: Callable[..., None] | None = None, cancel: threading.Event | None = None) -> Path:
     """Stage 5: the model calls, then the saved guide.
@@ -1752,14 +1816,14 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
     loses nothing already read. The checkpoint is removed once the guide is saved.
     """
     report, logger = reporter(progress)
-    settings = DEPTHS.get(state["depth"]) or DEPTHS["quick"]
+    writing = writing_for(state)
+    settings = writing.depths.get(state["depth"]) or writing.depths["quick"]
     topic = state["topic"]
     writing_started = time.time()
     who = llm.LABELS.get(provider, "")
     limit = llm.PROMPT_LIMITS.get(provider)
-    if limit:
-        fit_for_limit(state, limit, report, who)
-    part_head = state["slimHead"] if limit else state["head"]
+    if writing.prepare is not None and provider not in llm.PROVIDERS:
+        raise ValueError("Answering a question needs a writer: Claude, Codex or Grok.")
     read_effort = lighter_effort(effort) if light_reading else effort
     key = timing_key(provider, model, effort)
     part_key = timing_key(provider, model, read_effort)
@@ -1787,6 +1851,18 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
         report("write", f"Saved a checkpoint ({state['id']}), so this run can continue if it's interrupted",
                checkpoint=state["id"])
         try:
+            # A question plans its searches and gathers its threads here, with
+            # the checkpoint already saved: a limit or a restart while it
+            # plans or searches is paused and continued like any other.
+            if writing.prepare is not None and not state.get("prepared"):
+                writing.prepare(state, provider=provider, model=model, effort=read_effort, out_dir=out_dir,
+                                report=report, logger=logger, cancel=cancel, spend=spend, lock=lock)
+                state["prepared"] = True
+                save("running")
+            if limit:
+                fit_for_limit(state, limit, report, who, writing)
+            part_head = state["slimHead"] if limit else state["head"]
+            batches = state["batches"]
             if batches:
                 todo = [i for i in range(1, len(batches) + 1) if str(i) not in notes]
                 report("write", f"{len(batches)} parts in all", parts=len(batches), parts_done=len(notes),
@@ -1797,14 +1873,14 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
                                     f"reading the other {len(todo)}")
 
                 def read_part(index: int) -> None:
-                    prompt = (NOTES_INSTRUCTIONS.format(part=index, parts=len(batches), label=topic["label"])
-                              + (TIGHT_NOTES if limit else "") + part_head
+                    prompt = (writing.notes_prompt(index, len(batches), topic, bool(limit)) + part_head
                               + "\n## Threads in this part\n\n" + batches[index - 1]["text"])
                     part_started = time.monotonic()
-                    result = ask_checked(provider, prompt=prompt, schema=NOTES_SCHEMA, model=model, effort=read_effort,
-                                         cancel=cancel, log=logger("write"), timeout=1500,
+                    result = ask_checked(provider, prompt=prompt, schema=writing.notes_schema, model=model,
+                                         effort=read_effort, cancel=cancel, log=logger("write"), timeout=1500,
                                          label=f"{who} (part {index})", spend=spend, lock=lock,
-                                         empty=lambda data: batches[index - 1]["comments"] >= 5 and notes_empty(data))
+                                         empty=lambda data: batches[index - 1]["comments"] >= 5
+                                         and writing.notes_empty(data), system=writing.system)
                     took = time.monotonic() - part_started
                     record_timing(out_dir, part_key, "part", took)
                     with lock:
@@ -1843,15 +1919,16 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
                 threads_read = min(state["counts"]["threadsFetched"],
                                    sum(batches[int(i) - 1]["threads"] for i, _ in ordered))
                 comments_read = sum(batches[int(i) - 1]["comments"] for i, _ in ordered)
-                texts = [notes_text(int(i), n["data"], compact=bool(limit)) for i, n in ordered]
+                texts = [writing.notes_text(int(i), n["data"], bool(limit)) for i, n in ordered]
                 final_head = state["head"]
                 if limit:
-                    final_head = compact_head(state, rows=150)
-                    texts = merge_notes(texts, limit=limit, budget=limit - nbytes(INSTRUCTIONS) - nbytes(REDUCE_NOTE)
-                                        - nbytes(final_head) - 3000, provider=provider, model=model, effort=read_effort,
-                                        topic=topic, part_head=part_head, cancel=cancel, logger=logger, report=report,
-                                        spend=spend, lock=lock, who=who, parallel=settings.get("parallel", 3))
-                packet = (REDUCE_NOTE.format(threads=threads_read, comments=comments_read, parts=len(ordered))
+                    final_head = writing.compact_head(state, 150)
+                    texts = merge_notes(texts, limit=limit, budget=limit - nbytes(writing.final_prompt(state, ""))
+                                        - nbytes(writing.reduce_note) - nbytes(final_head) - 3000, provider=provider,
+                                        model=model, effort=read_effort, topic=topic, part_head=part_head,
+                                        cancel=cancel, logger=logger, report=report, spend=spend, lock=lock, who=who,
+                                        parallel=settings.get("parallel", 3), writing=writing)
+                packet = (writing.reduce_note.format(threads=threads_read, comments=comments_read, parts=len(ordered))
                           + final_head + "\n" + "\n".join(texts))
                 report("write", f"{who} is writing the guide from {len(ordered)} parts of notes "
                                 f"({len(packet) // 1000}k characters)")
@@ -1862,13 +1939,9 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
 
             report("write", f"{who} is writing the guide", final_started=True)
             final_started = time.monotonic()
-            result = ask_checked(provider,
-                                 prompt=INSTRUCTIONS.format(label=topic["label"], focus=topic["focus"],
-                                                            n_products={"quick": "12–20", "standard": "18–30",
-                                                                        "deep": "25–45"}[state["depth"]]) + packet,
-                                 schema=REPORT_SCHEMA, model=model, effort=effort, cancel=cancel, log=logger("write"),
-                                 timeout=1800, label=who, spend=spend, lock=lock,
-                                 empty=lambda data: not data.get("products"))
+            result = ask_checked(provider, prompt=writing.final_prompt(state, packet), schema=writing.final_schema,
+                                 model=model, effort=effort, cancel=cancel, log=logger("write"), timeout=1800,
+                                 label=who, spend=spend, lock=lock, empty=writing.final_empty, system=writing.system)
             guide = result["data"]
             final_model = result["model"]
             record_timing(out_dir, key, "final", time.monotonic() - final_started)
@@ -1918,6 +1991,14 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
         if not writer["note"]:
             writer["note"] = "Built from mention counts and a keyword tone score, without a model."
         read = {"threads": state["counts"]["threadsFetched"], "comments": state["counts"]["commentsFetched"], "parts": 0}
+
+    if writing.document is not None:
+        document = writing.document(state, guide, writer, read, seconds=state["seconds"] + round(time.time() - writing_started))
+        path = out_dir / "reports" / f"{state['id']}.json"
+        write_json(path, document, indent=1)
+        delete_checkpoint(out_dir, state["id"])
+        report("write", f"Saved {path.name}", report=path.name)
+        return path
 
     attach_catalog(guide, state["topicRows"], state["topicRows"])
 
@@ -1993,7 +2074,8 @@ def save_checkpoint(out_dir: Path, state: dict[str, Any]) -> None:
     full, meta = checkpoint_paths(out_dir, state["id"])
     write_json(full, state)
     write_json(meta, {
-        "id": state["id"], "topic": {k: state["topic"][k] for k in ("key", "label", "query")}, "depth": state["depth"],
+        "id": state["id"], "kind": state.get("kind") or "guide",
+        "topic": {k: state["topic"][k] for k in ("key", "label", "query")}, "depth": state["depth"],
         "status": state.get("status"), "reason": state.get("reason", ""), "resets": state.get("resets", ""),
         "provider": state.get("provider"), "model": state.get("model"), "effort": state.get("effort"),
         "partsDone": len(state.get("notes") or {}), "parts": len(state.get("batches") or []),
@@ -2054,6 +2136,9 @@ def list_reports(out_dir: Path) -> list[dict[str, Any]]:
         writer = doc.get("writer") or {}
         rows.append({
             "name": path.name,
+            "kind": doc.get("kind") or "guide",
+            "question": doc.get("question"),
+            "findings": len(guide.get("findings") or []),
             "topic": doc.get("topic"),
             "createdAt": doc.get("createdAt"),
             "depth": doc.get("depth"),
@@ -2138,7 +2223,14 @@ class Jobs:
 
     def new_entry(self, topic_key: str, query: str, depth: str, provider: str, model: str = "", effort: str = "",
                   light_reading: bool = True, auto_continue: bool = True) -> dict[str, Any]:
-        resolve_topic(topic_key, query)  # raises ValueError on a bad request
+        if topic_key == "question":
+            import ask
+
+            query = ask.check_question(query)  # raises ValueError
+            if provider not in llm.PROVIDERS:
+                raise ValueError("Answering a question needs a writer: pick Claude, Codex or Grok.")
+        else:
+            resolve_topic(topic_key, query)  # raises ValueError on a bad request
         if depth not in DEPTHS:
             raise ValueError("Unknown depth.")
         model, effort = self._check(provider, model, effort)
@@ -2255,10 +2347,12 @@ class Jobs:
     def _launch_locked(self, entry: dict[str, Any]) -> None:
         self.cancel = threading.Event()
         resumed = entry["kind"] == "resume"
+        question = entry.get("topic") == "question"
         self.entry = {k: entry.get(k) for k in ENTRY_KEYS}
         self.job = {
             "id": f"{int(time.time() * 1000)}", "llm": entry["provider"] != "none", "status": "running",
-            "stage": "write" if resumed else "catalog", "stages": list(STAGES),
+            "stage": "write" if resumed else "plan" if question else "catalog",
+            "stages": list(QUESTION_STAGES if question else STAGES), "kind": "question" if question else "guide",
             "startedAt": now_iso(), "finishedAt": None, "report": None, "error": None, "resets": "",
             "continuesAt": None, "log": [], "counts": {}, "resumed": resumed, "fromQueue": "id" in entry,
             **{k: entry.get(k) for k in ENTRY_KEYS if k != "kind"},
@@ -2450,9 +2544,10 @@ def delete_report(out_dir: Path, name: str) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Research a product type on Reddit and OCS, and write a guide.")
-    parser.add_argument("topic", nargs="?", choices=[*TOPICS, "custom"])
+    parser.add_argument("topic", nargs="?", choices=[*TOPICS, "custom", "question"],
+                        help="question: --query is a free question on any theme (needs a writer)")
     parser.add_argument("--resume", metavar="CHECKPOINT", help="continue a paused run (see research/checkpoints/)")
-    parser.add_argument("--query", default="", help="search words, for the custom topic")
+    parser.add_argument("--query", default="", help="search words for custom; the question for question")
     parser.add_argument("--depth", choices=list(DEPTHS), default="quick")
     parser.add_argument("--provider", choices=[*llm.PROVIDERS, "none"], default="claude",
                         help="who writes the guide; none = counts only")
