@@ -197,4 +197,75 @@ function applyPrivacy() {
     ? "Privacy mode is on: prices and notes are hidden"
     : "Privacy mode: hide prices and notes";
   elements.privacyButton.querySelector("use").setAttribute("href", prefs.privacy ? "#i-eye-off" : "#i-eye");
+  applyTitle();
+}
+
+/* ── Discretion: plain title, panic cover, blank when switched away ─────
+
+   Concealment for a glance over the shoulder or the phone's app switcher,
+   not security: anyone with the device can still open the page. */
+
+const PLAIN_ICON =
+  "data:image/svg+xml," +
+  encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect x="6" y="3" width="20" height="26" rx="3" fill="#e8e6df" stroke="#8a877c" stroke-width="2"/><path d="M11 11h10M11 16h10M11 21h6" stroke="#8a877c" stroke-width="2" stroke-linecap="round"/></svg>');
+const cover = { panic: false, away: false };
+
+function applyTitle() {
+  const plain = prefs.plainTitle || cover.panic || cover.away;
+  document.title = plain ? "Notes" : "Cloudline";
+  const icon = document.querySelector('link[rel="icon"]');
+  if (icon) {
+    icon.dataset.real = icon.dataset.real || icon.getAttribute("href");
+    icon.setAttribute("href", plain ? PLAIN_ICON : icon.dataset.real);
+  }
+}
+
+function applyCover() {
+  const shown = cover.panic || cover.away;
+  elements.cover.hidden = !shown;
+  for (const child of document.body.children) {
+    if (child !== elements.cover && child.tagName !== "SCRIPT") child.inert = shown;
+  }
+  applyTitle();
+}
+
+function togglePanic(on = !cover.panic) {
+  cover.panic = on;
+  applyCover();
+}
+
+function setupDiscretion() {
+  elements.plainTitleToggle.checked = prefs.plainTitle;
+  elements.blankAwayToggle.checked = prefs.blankAway;
+  elements.plainTitleToggle.addEventListener("change", () => {
+    prefs.plainTitle = elements.plainTitleToggle.checked;
+    savePrefs();
+    applyTitle();
+  });
+  elements.blankAwayToggle.addEventListener("change", () => {
+    prefs.blankAway = elements.blankAwayToggle.checked;
+    savePrefs();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "`" && !event.ctrlKey && !event.metaKey && !event.altKey && !isEditable(event.target)) {
+      event.preventDefault();
+      togglePanic();
+    }
+  });
+  document.addEventListener("touchstart", (event) => {
+    if (event.touches.length === 3) togglePanic(true);
+  }, { passive: true });
+  elements.cover.addEventListener("dblclick", () => togglePanic(false));
+
+  /* The app switcher shows the page as it was when you left it: cover it
+     then. It comes off by itself when you're back, unless panic put it up. */
+  const away = (hidden) => {
+    if (!prefs.blankAway) return;
+    cover.away = hidden;
+    applyCover();
+  };
+  document.addEventListener("visibilitychange", () => away(document.visibilityState === "hidden"));
+  window.addEventListener("pagehide", () => away(true));
+  window.addEventListener("pageshow", () => away(false));
 }

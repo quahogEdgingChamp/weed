@@ -44,11 +44,11 @@ QUESTION_MAX = 300
 # each subreddit reaches (pages of 100 newest posts), how many threads are
 # read and how. `chars`/`comments`/`comment_chars` as in research.DEPTHS.
 DEPTHS: dict[str, dict[str, Any]] = {
-    "quick": {"days": 730, "subs": 4, "searches": 5, "pages": 10, "threads": 30, "comments": 25,
+    "quick": {"days": 730, "subs": 4, "searches": 5, "pages": 10, "threads": 30, "comments": 25, "reddit_budget": 240,
               "comment_chars": 450, "chars": 140_000, "mode": "single"},
-    "standard": {"days": 1095, "subs": 6, "searches": 6, "pages": 25, "threads": 80, "comments": 40,
+    "standard": {"days": 1095, "subs": 6, "searches": 6, "pages": 25, "threads": 80, "comments": 40, "reddit_budget": 480,
                  "comment_chars": 450, "chars": 420_000, "mode": "single"},
-    "deep": {"days": 1825, "subs": 8, "searches": 8, "pages": 60, "threads": 200, "comments": None,
+    "deep": {"days": 1825, "subs": 8, "searches": 8, "pages": 60, "threads": 200, "comments": None, "reddit_budget": 900,
              "comment_chars": 900, "chars": 170_000, "mode": "batches", "comment_search": 4, "parallel": 3},
 }
 FINDINGS = {"quick": "5–9", "standard": "7–12", "deep": "9–16"}
@@ -178,11 +178,12 @@ def reddit_search(sub: str, words: str, cache_dir: Path, cancel: threading.Event
     if isinstance(cached, list):
         return cached
     query = urllib.parse.urlencode({"q": words, "restrict_sr": 1, "sort": "relevance", "t": "all", "limit": 100})
-    # A 429 fails at once rather than backing off for a minute: the scan of
-    # each subreddit's newest posts covers for a search that was refused.
+    # Reddit answers 429 to most unauthenticated searches, but lets about
+    # one a minute through: fetch backs off and tries again (5, 15, 45 s).
+    # The run's time budget (prepare) decides how long that's worth it.
     research.sleep(REDDIT_SEARCH_GAP, cancel)
     body = research.fetch(f"{research.REDDIT}/r/{sub}/search.rss?{query}", cancel=cancel,
-                          accept="application/atom+xml", agent=research.BROWSER_AGENT, retry_on=(500, 502, 503, 504))
+                          accept="application/atom+xml", agent=research.BROWSER_AGENT)
     rows = [{"id": e["id"][3:], "title": e["title"], "selftext": e["content"], "score": None, "num_comments": None,
              "created_utc": e["created"], "link_flair_text": None, "subreddit": sub, "author": e["author"]}
             for e in research.parse_atom(body) if e["id"].startswith("t3_")]
@@ -311,11 +312,16 @@ def prepare(state: dict[str, Any], *, provider: str, model: str, effort: str, ou
         old = found.get(post["id"])
         # Scores and comment counts come from the archive; a Reddit feed has none.
         merged = {**(old or {}), **{k: v for k, v in post.items() if v is not None}}
-        merged["_rel"] = max(rel, 1.0 if searched else 0.0, (old or {}).get("_rel", 0.0))
+        # A search engine picked it: worth more than a word match alone, and
+        # Reddit's feed has no comment counts to rank it by later.
+        merged["_rel"] = max(rel + (2.0 if searched else 0.0), (old or {}).get("_rel", 0.0))
         found[post["id"]] = merged
 
-    for sub in subs:
-        for words in plan["searches"]:
+    # Most important search first, across every subreddit, so a search
+    # source that gives out part way has covered what matters most.
+    reddit_spent = 0.0
+    for words in plan["searches"]:
+        for sub in subs:
             report("search", f"Searching r/{sub} for “{words}”", searches_done=done, searches_total=total)
             done += 1
             rows: list[dict[str, Any]] = []
@@ -327,7 +333,8 @@ def prepare(state: dict[str, Any], *, provider: str, model: str, effort: str, ou
                     failures["archive"] += 1
                     log(f"The archive's search didn't answer ({error})"
                         + ("; not asking it again this run" if failures["archive"] == GIVE_UP_AFTER else ""))
-            if not rows and failures["reddit"] < GIVE_UP_AFTER:
+            if not rows and failures["reddit"] < GIVE_UP_AFTER and reddit_spent < settings["reddit_budget"]:
+                asked = time.monotonic()
                 try:
                     rows = reddit_search(sub, words, cache_dir, cancel)
                     sources.add("reddit-search")
@@ -335,8 +342,13 @@ def prepare(state: dict[str, Any], *, provider: str, model: str, effort: str, ou
                     failures["reddit"] += 1
                     log(f"Reddit's search didn't answer ({error})"
                         + ("; not asking it again this run" if failures["reddit"] == GIVE_UP_AFTER else ""))
+                reddit_spent += time.monotonic() - asked
+                if reddit_spent >= settings["reddit_budget"]:
+                    log(f"Spent {round(reddit_spent / 60)} min waiting on Reddit's search; the rest comes from "
+                        f"each subreddit's newest posts")
             for post in rows:
                 keep({**post, "subreddit": post.get("subreddit") or sub}, searched=True)
+    for sub in subs:
         report("search", f"Reading the newest posts in r/{sub}", searches_done=done, searches_total=total)
         done += 1
         try:

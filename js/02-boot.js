@@ -140,6 +140,8 @@ function initialize() {
     confirmClearAll();
   });
 
+  setupDiscretion();
+
   elements.privacyButton.addEventListener("click", () => {
     prefs.privacy = !prefs.privacy;
     savePrefs();

@@ -94,6 +94,16 @@
                 <input id="reminders-toggle" type="checkbox" />
                 Remind me to rate purchases
               </label>
+              <p class="menu-label">Discretion</p>
+              <label class="menu-check">
+                <input id="plain-title-toggle" type="checkbox" />
+                Plain tab title and icon
+              </label>
+              <label class="menu-check">
+                <input id="blank-away-toggle" type="checkbox" />
+                Blank the page when I switch away
+              </label>
+              <p class="menu-hint">Panic: press <kbd>`</kbd> or tap with three fingers to cover the page; again (or a double tap) to come back.</p>
               <hr />
               <button id="reset-button" class="menu-item menu-item-danger" type="button">
                 Clear collection and shopping list&hellip;
@@ -741,6 +751,11 @@
     <datalist id="vendor-options"></datalist>
     <datalist id="tag-options"></datalist>
 
+    <!-- Panic / switched away: a plain page over everything (see js/03-helpers.js). -->
+    <div id="cover" class="cover" hidden>
+      <h1>Notes</h1>
+      <p>Nothing here yet.</p>
+    </div>
     <script src="core.js"></script>
     <!-- The page, in order: they share one scope (see README, Files). -->
     <script src="js/01-setup.js"></script>

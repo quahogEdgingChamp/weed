@@ -330,6 +330,29 @@ function plantResearchQueue() {
     check(await page.isVisible("#privacy-indicator"), "privacy is clearly indicated");
     await page.click("#privacy-button");
 
+    step("Discretion");
+    await page.click("body", { position: { x: 5, y: 300 } });
+    await page.keyboard.press("`");
+    check(await page.isVisible("#cover"), "` covers the page");
+    check((await page.title()) === "Notes", "with a plain tab title");
+    check(await page.$eval("#main", (element) => element.inert), "and nothing behind it can be reached");
+    await page.dblclick("#cover");
+    check(await page.isHidden("#cover") && (await page.title()) === "Cloudline", "a double tap brings the page back");
+    await page.click("#menu-button");
+    await page.check("#plain-title-toggle");
+    check((await page.title()) === "Notes", "Plain tab title keeps the title plain");
+    check((await page.getAttribute('link[rel="icon"]', "href")).startsWith("data:image/svg"), "and the icon");
+    await page.uncheck("#plain-title-toggle");
+    await page.check("#blank-away-toggle");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+    check(await page.isVisible("#cover"), "switching away blanks the page");
+    await page.evaluate(() => window.dispatchEvent(new Event("pageshow")));
+    check(await page.isHidden("#cover"), "and coming back shows it again");
+    await page.click("#menu-button");
+    await page.uncheck("#blank-away-toggle");
+    await page.keyboard.press("Escape");
+
     step("Import preview");
     const importFile = path.join(WORK, "import.json");
     fs.writeFileSync(importFile, JSON.stringify({ products: [{ name: "Imported One", rating: 7 }, { name: "" }, { name: "Bad Link", sourceUrl: "javascript:alert(1)" }] }));
@@ -493,6 +516,7 @@ function plantResearchQueue() {
     await rs.click(".rs-full-log summary");
     check(/2 lines · 1 problem/.test(await rs.textContent(".rs-full-log summary")), "the full log folds progress and counts problems");
     check(await rs.isVisible(".rs-full-log li.is-warn >> text=timed out"), "and marks the problem");
+    await waitFor(() => rs.evaluate(() => ui.logOpen)); /* "toggle" arrives a moment after the click */
     await rs.evaluate(() => renderJob());
     check(await rs.isVisible(".rs-full-log li.is-warn"), "it stays open while the panel redraws");
     await rs.evaluate(() => { ui.overview.job = null; renderJob(); });

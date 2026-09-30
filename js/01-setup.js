@@ -148,6 +148,8 @@ function loadPrefs() {
   return {
     theme: ["system", "light", "dark"].includes(stored.theme) ? stored.theme : "system",
     privacy: Boolean(stored.privacy),
+    plainTitle: Boolean(stored.plainTitle),
+    blankAway: Boolean(stored.blankAway),
     sortBy: typeof stored.sortBy === "string" ? stored.sortBy : "purchaseDate-desc",
     wishSort: typeof stored.wishSort === "string" ? stored.wishSort : "priority",
     filters,
@@ -239,6 +241,9 @@ const elements = {
   syncLabel: $("#sync-label"),
   syncDetail: $("#sync-detail"),
   privacyButton: $("#privacy-button"),
+  plainTitleToggle: $("#plain-title-toggle"),
+  blankAwayToggle: $("#blank-away-toggle"),
+  cover: $("#cover"),
   privacyIndicator: $("#privacy-indicator"),
 
   menuButton: $("#menu-button"),

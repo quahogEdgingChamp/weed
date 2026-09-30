@@ -142,6 +142,11 @@ dependencies.
 
 - Light (cream) and dark (midnight green) themes, following the OS or picked in the menu; a deep-green header and page heroes with a leaf mark, lime and purple accents, colour-coded product types
 - Privacy mode hides prices and notes for screen sharing
+- Discretion (Menu): a plain "Notes" tab title and icon; blank the page when
+  you switch away, so the phone's app switcher shows nothing; and a panic
+  cover: `` ` `` or a three-finger tap covers everything with a plain page,
+  again (or a double tap) brings it back. Per browser, and concealment only:
+  anyone holding the device can still open the page
 - Keyboard: dialogs trap focus and return it on close, Escape closes,
   Back closes the details panel
 - Installable, and the page itself opens offline

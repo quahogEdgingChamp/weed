@@ -5955,3 +5955,36 @@ p.rs-solo {
   border-left: 3px solid var(--danger);
   background: var(--danger-wash);
 }
+
+/* ── Discretion: the panic / switched-away cover ── */
+
+.cover {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  padding: 48px 24px;
+  background: #fbfaf7;
+  color: #3b3a36;
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.cover h1 {
+  margin-bottom: 12px;
+  font-size: 1.6rem;
+  font-weight: 400;
+}
+
+.cover p {
+  color: #8a877c;
+}
+
+.cover[hidden] {
+  display: none;
+}
+
+.menu-hint {
+  padding: 0.2rem 0.6rem 0.4rem;
+  color: var(--ink-3);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
