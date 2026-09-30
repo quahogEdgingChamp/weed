@@ -195,7 +195,7 @@ class ServerTest(unittest.TestCase):
 
     def test_only_public_files_are_served(self) -> None:
         self.put("", [{"id": "a", "name": "secret"}])
-        for path in ["/", "/index.html", "/app.js", "/core.js", "/styles.css", "/sw.js", "/manifest.webmanifest", "/icon.svg"]:
+        for path in ["/", "/index.html", "/js/01-setup.js", "/js/35-research-events.js", "/core.js", "/styles.css", "/sw.js", "/manifest.webmanifest", "/icon.svg"]:
             with self.subTest(path=path):
                 status, _, response = self.request("GET", path)
                 self.assertEqual(status, 200)
@@ -206,9 +206,9 @@ class ServerTest(unittest.TestCase):
                 self.assertEqual(status, 404)
 
     def test_static_files_support_conditional_requests(self) -> None:
-        _, _, response = self.request("GET", "/app.js")
+        _, _, response = self.request("GET", "/js/01-setup.js")
         last_modified = response.getheader("Last-Modified")
-        status, _, _ = self.request("GET", "/app.js", headers={"If-Modified-Since": last_modified})
+        status, _, _ = self.request("GET", "/js/01-setup.js", headers={"If-Modified-Since": last_modified})
         self.assertEqual(status, 304)
 
 

@@ -76,13 +76,16 @@ STATIC_FILES: dict[str, tuple[str, str]] = {
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
     "/core.js": ("core.js", "text/javascript; charset=utf-8"),
-    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-    "/research.js": ("research.js", "text/javascript; charset=utf-8"),
     "/sw.js": ("sw.js", "text/javascript; charset=utf-8"),
     "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
     "/icon.svg": ("icon.svg", "image/svg+xml"),
     "/fonts/bricolage-grotesque-latin.woff2": ("fonts/bricolage-grotesque-latin.woff2", "font/woff2"),
 }
+# The page's scripts, js/NN-name.js, loaded in order by index.html.
+STATIC_FILES.update({
+    f"/js/{path.name}": (f"js/{path.name}", "text/javascript; charset=utf-8")
+    for path in sorted((Path(__file__).resolve().parent / "js").glob("*.js"))
+})
 
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",

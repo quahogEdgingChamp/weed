@@ -7,7 +7,7 @@
 
    Screenshots land in $E2E_SHOTS (default: a temp folder, printed at the end). */
 
-const { spawn } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -150,6 +150,7 @@ function plantResearchQueue() {
 
 (async () => {
   plantResearchQueue();
+  const guide = execFileSync("python3", [path.join(ROOT, "tests", "make_guide.py"), path.join(WORK, "research")], { encoding: "utf8" }).trim();
   const port = await freePort();
   const server = spawn("python3", [path.join(ROOT, "serve.py"), "--port", String(port), "--data", DATA], { stdio: "ignore" });
   const url = `http://127.0.0.1:${port}/`;
@@ -486,6 +487,17 @@ function plantResearchQueue() {
     await phone.screenshot({ path: path.join(SHOTS, "w390-research-queue.png"), fullPage: true });
     check(await noHorizontalScroll(phone), "390px research: no sideways scrolling");
     await phone.context().close();
+
+    step("Research guide");
+    const gp = await newPage(browser, `${url}?view=research&report=${encodeURIComponent(guide)}`);
+    await gp.waitForSelector("#rs-rankings");
+    check(await gp.isVisible(".rs-toc"), "the guide shows its section menu");
+    check((await gp.$$(".rs-card")).length === 1, "the guide shows its product card");
+    await gp.click("[data-home]");
+    await gp.waitForSelector("#rs-saved-heading");
+    check(await gp.isVisible(`[data-open="${guide}"]`), "Back lists it under Saved guides");
+    check(gp.errors.length === 0, `guide no script errors (${gp.errors.join(" | ")})`);
+    await gp.context().close();
 
     /* ── Layout ────────────────────────────────────────────────────────── */
     step("Layouts");

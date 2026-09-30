@@ -265,11 +265,12 @@ usage; so is saving the collection.
 
 ```bash
 python3 -m unittest discover tests      # server: revisions, validation, snapshots, routing
-node --test tests/core.test.js          # merge, migration, filters, units
+node --test tests/*.test.js             # merge, migration, filters, units; script order
 PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core node tests/e2e.js
 ```
 
-All three run against temporary data, never `weed_chart.json`. The browser
+All three run against temporary data, never `weed_chart.json`; the browser
+test writes its sample guide with `tests/make_guide.py` (no network, no model). The browser
 test starts its own server on a free port. On qwertyserver Chromium lacks
 some desktop libraries (`libatk-1.0.so.0`, fonts): download and unpack them
 into a temporary folder and pass `LD_LIBRARY_PATH` and `FONTCONFIG_FILE`, as
@@ -277,14 +278,21 @@ in `~/infomds/MEALPLANNER.md` ("Browser verification").
 
 ## Files
 
+The page is plain scripts in `js/`, loaded in file order by `index.html`
+with no build step. They share one global scope, like one long file: a
+later file can use anything an earlier one defines, and code that runs at
+load time may only use what is already loaded. `tests/scripts.test.js`
+checks that `index.html` and `sw.js` list every script and that no name is
+declared twice. A new script needs a line in both.
+
 | File | Purpose |
 |---|---|
 | `index.html` | Page structure |
 | `styles.css` | Themes and layout |
 | `core.js` | Validation, migration, merge, filters, insights (no DOM) |
-| `app.js` | The page: rendering, forms, dialogs, sync |
+| `js/01-setup.js` … `js/20-start.js` | The page: storage and state, then one file per part (collection, filters, details, form, OCS, terpenes, shopping, insights, backups, menu, sync); `20-start.js` starts it |
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell and install |
-| `research.js` | The Research tab: launcher, progress, guide page, charts |
+| `js/30-research-*.js` … | The Research tab: setup, home (launcher, progress, queue), guide, products, terpenes, events |
 | `fonts/` | Bricolage Grotesque (headings), self-hosted, SIL OFL |
 | `ocs.py` | Turns an ocs.ca link into fields |
 | `hibuddy.py` | Finds a product's hibuddy.ca page for the price links |
