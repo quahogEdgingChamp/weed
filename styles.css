@@ -3354,7 +3354,9 @@ label.rs-option-label {
 
 .rs-start-row {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: var(--s-2);
 }
 
 .rs-options .segmented button:disabled {
@@ -5222,6 +5224,15 @@ thead th {
   gap: var(--s-3);
   padding: var(--s-4);
   border-left: 4px solid var(--warn);
+}
+
+/* Up next: waiting its turn (accent), or held until a usage limit resets (warn). */
+.rs-queue .rs-paused-item {
+  border-left-color: var(--accent);
+}
+
+.rs-queue .rs-paused-item[data-waiting="limit"] {
+  border-left-color: var(--warn);
 }
 
 .rs-paused-text {

@@ -97,6 +97,16 @@ dependencies.
   the tab offers **Continue** (same writer, once the limit resets — the
   reset time is shown), **Finish with** another writer or model, or
   **Discard**. A Stop or a server restart mid-run is saved the same way
+- **Up next**: while a run goes, **Add to queue** lines up more; they run one
+  after another, on the server, with the tab closed. Reorder (**Move to
+  front**) or remove them. With "continue by itself when the limit resets"
+  ticked (the default), a run paused by a usage limit goes back to the front
+  of the queue and continues at the reset time the CLI gave (plus two
+  minutes; an hour later if it didn't say). Meanwhile runs for other writers
+  go ahead, and new runs for that writer are queued for the reset time
+  (**Start now anyway** skips the wait). Six quick pauses in a row and it
+  waits for you instead. The queue, and a run cut off by a server restart,
+  pick up again when the server starts
 - The guide page: filterable, sortable product cards with Reddit quotes and
   links, a compare table, a price-per-gram vs score chart, monthly talk
   volume, brand mention sparklines; each card links to OCS, store prices and
@@ -202,7 +212,8 @@ in memory for a day.
 ## How research works
 
 `research.py` does the work; `serve.py` runs it in a background thread (one at
-a time) and `research.js` shows it. It also runs from the shell:
+a time, the rest queued in `research/queue.json`) and `research.js` shows it.
+It also runs from the shell:
 
 ```bash
 python3 research.py live-carts --depth quick                     # Claude, CLI default model
@@ -230,8 +241,11 @@ Reddit).
 
 Everything lands in `research/` next to the data file: `reports/` holds the
 guides (JSON), `cache/` the downloads, `checkpoints/` runs waiting to
-continue (a few MB each; removed once their guide is written). It's gitignored. Starting a run is
-refused for cross-site requests, since it spends Claude usage.
+continue (a few MB each; removed once their guide is written), `queue.json`
+the queued runs, which writers are held by a usage limit until when, and the
+run that was going (so a restart continues it). It's gitignored. Starting or
+queueing a run is refused for cross-site requests, since it spends Claude
+usage; so is saving the collection.
 
 ## Data file
 
@@ -256,7 +270,10 @@ PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core node tests/e2e.js
 ```
 
 All three run against temporary data, never `weed_chart.json`. The browser
-test starts its own server on a free port.
+test starts its own server on a free port. On qwertyserver Chromium lacks
+some desktop libraries (`libatk-1.0.so.0`, fonts): download and unpack them
+into a temporary folder and pass `LD_LIBRARY_PATH` and `FONTCONFIG_FILE`, as
+in `~/infomds/MEALPLANNER.md` ("Browser verification").
 
 ## Files
 

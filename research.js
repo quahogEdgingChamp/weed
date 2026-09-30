@@ -65,6 +65,8 @@
     table: { key: "score", asc: false },
     resizeTimer: null,
     lightReading: true,
+    autoContinue: true,
+    lastJobId: null,
     listView: "active",
     listSort: "newest",
   };
@@ -82,6 +84,7 @@
         if (["quick", "standard", "deep"].includes(saved.depth)) ui.depth = saved.depth;
         if (typeof saved.listSort === "string") ui.listSort = saved.listSort;
         if (typeof saved.lightReading === "boolean") ui.lightReading = saved.lightReading;
+        if (typeof saved.autoContinue === "boolean") ui.autoContinue = saved.autoContinue;
         for (const p of WRITERS) {
           const c = saved.choice && saved.choice[p];
           if (c && typeof c === "object") {
@@ -96,7 +99,7 @@
 
   function savePrefs() {
     try {
-      window.localStorage.setItem(PREFS_KEY, JSON.stringify({ provider: ui.provider, depth: ui.depth, choice: ui.choice, listSort: ui.listSort, lightReading: ui.lightReading }));
+      window.localStorage.setItem(PREFS_KEY, JSON.stringify({ provider: ui.provider, depth: ui.depth, choice: ui.choice, listSort: ui.listSort, lightReading: ui.lightReading, autoContinue: ui.autoContinue }));
     } catch (error) {
       /* Not remembered; nothing else depends on it. */
     }
@@ -138,6 +141,17 @@
     return Number.isNaN(date.getTime())
       ? ""
       : date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }
+
+  /* "3:02 pm" today, "Thu 3:02 pm" within a week, else a date and time. */
+  function clock(iso) {
+    const date = new Date(iso || "");
+    if (Number.isNaN(date.getTime())) return "";
+    const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    const days = (date - new Date(new Date().toDateString())) / 86400000;
+    if (days >= 0 && days < 1) return time;
+    if (days >= -1 && days < 6) return `${date.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
+    return `${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${time}`;
   }
 
   function monthLabel(key, style = "short") {
@@ -301,6 +315,7 @@
             </div>
           </div>
           <div id="rs-job"></div>
+          <div id="rs-queue"></div>
           <div id="rs-paused"></div>
           <div id="rs-launch"></div>
           <section class="rs-saved" aria-labelledby="rs-saved-heading">
@@ -313,9 +328,11 @@
     if (reportParam()) return; /* the user moved on while this loaded */
     renderLaunch();
     renderJob();
+    renderQueue();
     renderPaused();
     renderReportList();
-    if (ui.overview?.job?.status === "running") startPolling();
+    ui.lastJobId = ui.overview?.job?.id || null;
+    if (ui.overview?.job?.status === "running" || queueEntries().length) startPolling();
   }
 
   function renderLaunch() {
@@ -338,6 +355,7 @@
         : `last ${o.depths.deep?.days || 365} days · restart the server to get the new deep mode`,
     }[ui.depth];
     const writing = ui.provider !== "none";
+    const limitedUntil = writing ? o.queue?.limited?.[ui.provider] : null;
     const minutes = writing
       ? { quick: "3–6 min", standard: "6–12 min", deep: "20–45 min" }
       : { quick: "1–3 min", standard: "2–5 min", deep: "5–15 min" };
@@ -400,11 +418,29 @@
           </div>
         </div>
         ${writing ? `<div class="rs-options rs-model-row" id="rs-model-row">${modelControls()}</div>` : ""}
+        ${
+          writing
+            ? `<label class="rs-check"><input type="checkbox" id="rs-auto" ${ui.autoContinue ? "checked" : ""} />
+                If ${esc(PROVIDER_LABEL[ui.provider])} hits its usage limit, continue by itself when the limit resets</label>`
+            : ""
+        }
         <div class="rs-start-row">
-          <button id="rs-start" class="btn btn-primary rs-start" type="button" ${running || ui.starting ? "disabled" : ""}>
-            ${running ? "A run is going…" : ui.starting ? "Starting…" : "Start research"}
+          <button id="rs-start" class="btn btn-primary rs-start" type="button" ${ui.starting ? "disabled" : ""}>
+            ${ui.starting ? "Starting…" : running ? "Add to queue" : limitedUntil ? `Queue for ${esc(clock(limitedUntil))}` : "Start research"}
           </button>
+          ${
+            limitedUntil && !running
+              ? `<button class="btn btn-secondary" type="button" data-act="start-now">Start now anyway</button>`
+              : ""
+          }
         </div>
+        ${
+          running
+            ? `<p class="rs-hint">One run at a time: this one starts when the runs ahead of it finish.</p>`
+            : limitedUntil
+              ? `<p class="rs-hint">${esc(PROVIDER_LABEL[ui.provider])}'s usage limit should reset about ${esc(clock(limitedUntil))}; queued runs with it wait until then.</p>`
+              : ""
+        }
         ${ui.startError ? `<p class="rs-error" role="alert">${esc(ui.startError)}</p>` : ""}
       </section>`;
   }
@@ -581,7 +617,11 @@
         }
         <ul class="rs-log" aria-live="polite">${log.map((line) => `<li>${esc(line.message)}</li>`).join("")}</ul>
         ${
-          job.status === "paused"
+          job.status === "paused" && job.continuesAt
+            ? `<p class="rs-paused-note">${esc(job.error || "Paused.")} Everything read so far is saved, and it
+                continues by itself about <strong>${esc(clock(job.continuesAt))}</strong> (see Up next). To finish
+                sooner, pick another writer or model under “Who writes the guide”.</p>`
+            : job.status === "paused"
             ? `<p class="rs-paused-note">${esc(job.error || "Paused.")} Everything read so far is saved: ${
                 /limit/i.test(job.error || "")
                   ? "continue once the limit resets, or finish now with another writer or model"
@@ -601,20 +641,94 @@
     const picked = { provider: ui.provider, model: ui.provider === "none" ? "" : currentModel(), effort: ui.provider === "none" ? "" : ui.choice[ui.provider].effort };
     const describe = (w) => `${PROVIDER_LABEL[w.provider] || w.provider}${w.model ? ` (${w.model})` : ""}`;
     const differs = picked.provider !== "none" && (picked.provider !== same.provider || picked.model !== same.model);
+    /* While another run is going, these queue the continue instead. */
     const busy = ui.overview?.job?.status === "running";
+    const queued = queueEntries().some((e) => e.checkpoint === run.id);
+    const verb = busy ? "Queue: " : "";
     return `<div class="rs-continue">
-      <button class="btn btn-primary btn-small" type="button" ${busy ? "disabled" : ""}
-        data-resume="${esc(run.id)}" data-provider-to="${esc(same.provider)}" data-model-to="${esc(same.model)}" data-effort-to="${esc(same.effort)}">
-        Continue with ${esc(describe(same))}</button>
+      ${
+        queued
+          ? ""
+          : `<button class="btn btn-primary btn-small" type="button"
+              data-resume="${esc(run.id)}" data-provider-to="${esc(same.provider)}" data-model-to="${esc(same.model)}" data-effort-to="${esc(same.effort)}">
+              ${verb}${busy ? "continue" : "Continue"} with ${esc(describe(same))}</button>`
+      }
       ${
         differs
-          ? `<button class="btn btn-secondary btn-small" type="button" ${busy ? "disabled" : ""}
+          ? `<button class="btn btn-secondary btn-small" type="button"
               data-resume="${esc(run.id)}" data-provider-to="${esc(picked.provider)}" data-model-to="${esc(picked.model)}" data-effort-to="${esc(picked.effort)}">
-              Finish with ${esc(describe(picked))}</button>`
+              ${verb}${busy ? "finish" : "Finish"} with ${esc(describe(picked))}</button>`
           : ""
       }
       <button class="btn btn-ghost btn-small" type="button" data-discard="${esc(run.id)}">Discard</button>
     </div>`;
+  }
+
+  function queueEntries() {
+    return ui.overview?.queue?.entries || [];
+  }
+
+  /* Runs waiting their turn. A run paused by a usage limit comes back here,
+     at the front, and waits for that writer's limit to reset. */
+  function renderQueue() {
+    const box = $("#rs-queue");
+    if (!box || !ui.overview) return;
+    const entries = queueEntries();
+    if (!entries.length) {
+      box.innerHTML = "";
+      return;
+    }
+    const busy = ui.overview.job?.status === "running";
+    const checkpoints = new Map((ui.overview.checkpoints || []).map((c) => [c.id, c]));
+    const firstReady = entries.findIndex((e) => !e.waitingUntil);
+    const status = (e, i) => {
+      const who = PROVIDER_LABEL[e.provider] || e.provider;
+      if (e.waitingUntil) return `Waits for ${who}'s usage limit to reset, about ${clock(e.waitingUntil)}`;
+      if (i === firstReady) return busy ? "Next, when the current run finishes" : "Starting…";
+      return "Waiting its turn";
+    };
+    const what = (e) => {
+      if (e.kind !== "resume") return "";
+      const c = checkpoints.get(e.checkpoint);
+      const read = c && c.parts ? `${num(c.partsDone)} of ${num(c.parts)} parts read` : "evidence gathered";
+      return e.restarted ? ` · picks up after the server restarted (${read})` : ` · continues a paused run (${read})`;
+    };
+    box.innerHTML = `<section class="rs-saved" aria-labelledby="rs-queue-heading">
+      <h2 id="rs-queue-heading" class="rs-h2">Up next <span class="rs-count">${entries.length}</span></h2>
+      <ol class="rs-report-list rs-queue">${entries
+        .map(
+          (e, i) => `<li class="card rs-paused-item" data-waiting="${e.waitingUntil ? "limit" : ""}">
+            <div class="rs-paused-text">
+              <span class="rs-eyebrow">${esc(e.label || "Research")} · ${esc(e.depth)} · ${esc(
+                e.provider === "none"
+                  ? "counts only"
+                  : `${PROVIDER_LABEL[e.provider] || e.provider}${e.model ? ` (${e.model}${e.effort ? `, ${e.effort}` : ""})` : ""}`
+              )}${esc(what(e))}</span>
+              <span class="rs-report-title">${esc(status(e, i))}</span>
+            </div>
+            <div class="rs-continue">
+              ${i > 0 ? `<button class="btn btn-secondary btn-small" type="button" data-queue-first="${esc(e.id)}">Move to front</button>` : ""}
+              <button class="btn btn-ghost btn-small" type="button" data-queue-remove="${esc(e.id)}">${
+                e.auto || e.restarted ? "Don't continue by itself" : "Remove"
+              }</button>
+            </div>
+          </li>`
+        )
+        .join("")}</ol>
+    </section>`;
+  }
+
+  async function queueAction(path, method) {
+    try {
+      const { queue } = await api(`${API}/queue/${path}`, { method, body: method === "POST" ? "{}" : undefined });
+      ui.overview.queue = queue;
+    } catch (error) {
+      window.Cloudline?.toast(error.message === "Not found" ? "That run already left the queue." : error.message);
+      await loadOverview();
+    }
+    renderQueue();
+    renderPaused();
+    renderLaunch();
   }
 
   /* Runs saved at a checkpoint: paused by a usage limit, stopped, or cut off
@@ -625,7 +739,8 @@
     const job = ui.overview.job;
     const live = job && job.status === "running" ? job.checkpoint : null;
     const shownInPanel = job && job.id === ui.watchedJob && job.checkpoint;
-    const runs = (ui.overview.checkpoints || []).filter((c) => c.id !== live && c.id !== shownInPanel);
+    const queued = new Set(queueEntries().map((e) => e.checkpoint).filter(Boolean));
+    const runs = (ui.overview.checkpoints || []).filter((c) => c.id !== live && c.id !== shownInPanel && !queued.has(c.id));
     if (!runs.length) {
       box.innerHTML = "";
       return;
@@ -658,17 +773,25 @@
 
   async function resumeRun(checkpoint, provider, model, effort) {
     ui.startError = "";
+    const queue = ui.overview?.job?.status === "running";
     try {
-      const { job } = await api(`${API}/resume`, {
+      const { job, queued, queue: waiting } = await api(`${API}/resume`, {
         method: "POST",
-        body: JSON.stringify({ checkpoint, provider, model, effort, lightReading: ui.lightReading }),
+        body: JSON.stringify({ checkpoint, provider, model, effort, lightReading: ui.lightReading, autoContinue: ui.autoContinue, queue }),
       });
+      if (waiting) ui.overview.queue = waiting;
       ui.overview.job = job;
-      ui.watchedJob = job.id;
+      if (!queue) ui.watchedJob = job.id;
+      ui.lastJobId = job?.id || null;
       renderJob();
+      renderQueue();
       renderPaused();
       renderLaunch();
       startPolling();
+      if (queued) {
+        window.Cloudline?.toast("Queued: it continues when the runs ahead of it finish.");
+        return;
+      }
       window.requestAnimationFrame(() => $("#rs-job")?.scrollIntoView({ behavior: "smooth", block: "start" }));
     } catch (error) {
       window.Cloudline?.toast(
@@ -688,6 +811,7 @@
     await loadOverview();
     if (ui.overview?.job?.checkpoint === checkpoint) ui.watchedJob = null;
     renderJob();
+    renderQueue();
     renderPaused();
     window.Cloudline?.toast("Paused run discarded.");
   }
@@ -869,7 +993,7 @@
     </button>`;
   }
 
-  async function startRun({ topic = ui.topic, query = ui.query, depth = ui.depth, provider = ui.provider } = {}) {
+  async function startRun({ topic = ui.topic, query = ui.query, depth = ui.depth, provider = ui.provider, now = false } = {}) {
     if (topic === "custom" && !query.trim()) {
       ui.startError = "Type what to research first.";
       renderLaunch();
@@ -879,8 +1003,12 @@
     ui.starting = true;
     ui.startError = "";
     renderLaunch();
+    /* Queue behind a running run, or behind this writer's usage limit;
+       "Start now anyway" skips the limit wait. */
+    const running = ui.overview?.job?.status === "running";
+    const queue = running || (!now && provider !== "none" && Boolean(ui.overview?.queue?.limited?.[provider]));
     try {
-      const { job } = await api(`${API}/jobs`, {
+      const { job, queued, queue: waiting } = await api(`${API}/jobs`, {
         method: "POST",
         body: JSON.stringify({
           topic,
@@ -891,12 +1019,22 @@
           model: provider === "none" ? "" : currentModel(provider),
           effort: provider === "none" ? "" : ui.choice[provider].effort,
           lightReading: ui.lightReading,
+          autoContinue: ui.autoContinue,
+          queue,
         }),
       });
+      if (waiting) ui.overview.queue = waiting;
       ui.overview.job = job;
-      ui.watchedJob = job.id;
+      const startedNow = job && job.status === "running" && job.id !== ui.lastJobId;
+      if (!queued || startedNow) ui.watchedJob = job.id;
+      ui.lastJobId = job?.id || null;
       startPolling();
-      window.requestAnimationFrame(() => $("#rs-job")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      if (queued && !startedNow) {
+        window.Cloudline?.toast(`Queued: ${queued.label}.`);
+        window.requestAnimationFrame(() => $("#rs-queue")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      } else {
+        window.requestAnimationFrame(() => $("#rs-job")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      }
     } catch (error) {
       ui.startError = error.message;
       if (error.payload?.job) ui.overview.job = error.payload.job;
@@ -907,40 +1045,66 @@
       } else {
         renderLaunch();
         renderJob();
+        renderQueue();
+        renderPaused();
       }
     }
   }
 
+  /* Fast while a run goes; slowly while runs only wait in the queue (for a
+     usage limit), so the page notices when one starts. */
   function startPolling() {
     if (ui.pollTimer) return;
     const tick = async () => {
       ui.pollTimer = null;
-      let job;
+      let fresh;
       try {
-        job = (await api(API)).job;
+        fresh = await api(API);
       } catch (error) {
         ui.pollTimer = window.setTimeout(tick, POLL_MS * 4);
         return;
       }
-      const wasRunning = ui.overview?.job?.status === "running";
+      const job = fresh.job;
+      const before = ui.overview?.job;
+      const wasRunning = before?.status === "running";
+      const switched = Boolean(job && ui.lastJobId && job.id !== ui.lastJobId);
+      ui.lastJobId = job?.id || null;
       ui.overview.job = job;
+      ui.overview.queue = fresh.queue;
+      const waiting = (fresh.queue?.entries || []).length > 0;
       if (job && job.status === "running") {
         ui.pollTimer = window.setTimeout(tick, POLL_MS);
-      } else if (wasRunning) {
+      } else if (waiting) {
+        ui.pollTimer = window.setTimeout(tick, POLL_MS * 10);
+      }
+      if (wasRunning && (job?.status !== "running" || switched)) {
         await loadOverview();
-        if (job && job.status === "done" && job.id === ui.watchedJob && !reportParam() && isVisible()) {
-          window.Cloudline?.toast(`Your ${job.label} guide is ready.`);
-          go(job.report);
-          return;
+        /* The run the page was showing has ended; a queued one may already
+           have taken its place, so read how it ended from "recent". */
+        const ended = switched ? (fresh.queue?.recent || []).find((r) => r.id === before.id) : job;
+        const nextStarted = switched && job?.status === "running";
+        if (ended?.status === "done") {
+          if (ended.id === ui.watchedJob && !nextStarted && !reportParam() && isVisible()) {
+            window.Cloudline?.toast(`Your ${ended.label} guide is ready.`);
+            go(ended.report);
+            return;
+          }
+          window.Cloudline?.toast(`Your ${ended.label} guide is ready${nextStarted ? `; ${job.label} is next` : ""}.`);
+        } else if (ended?.status === "paused") {
+          if (!nextStarted) ui.watchedJob = ended.id;
+          window.Cloudline?.toast(
+            ended.continuesAt
+              ? `Paused: ${ended.label} continues by itself about ${clock(ended.continuesAt)}.`
+              : `Paused: ${ended.error || "the writer hit its usage limit"}`
+          );
         }
-        if (job && job.status === "paused") {
-          ui.watchedJob = job.id;
-          window.Cloudline?.toast(`Paused: ${job.error || "the writer hit its usage limit"}`);
-        }
+      } else if (switched) {
+        await loadOverview(); /* a queued run started while nothing was going */
       }
       if (!reportParam()) {
         renderJob();
-        if (!job || job.status !== "running") {
+        renderQueue();
+        if (!job || job.status !== "running" || switched) {
           renderLaunch();
           renderPaused();
           renderReportList();
@@ -2115,6 +2279,8 @@
     if (t.dataset.terp) return filterTerpene(t.dataset.terp, !("terpAll" in t.dataset));
     if (t.dataset.resume) return resumeRun(t.dataset.resume, t.dataset.providerTo, t.dataset.modelTo, t.dataset.effortTo);
     if (t.dataset.discard) return discardRun(t.dataset.discard);
+    if (t.dataset.queueFirst) return queueAction(`${encodeURIComponent(t.dataset.queueFirst)}/first`, "POST");
+    if (t.dataset.queueRemove) return queueAction(encodeURIComponent(t.dataset.queueRemove), "DELETE");
     if (t.dataset.list) {
       ui.listView = t.dataset.list;
       return renderReportList();
@@ -2123,6 +2289,8 @@
     switch (t.dataset.act) {
       case "start":
         return startRun();
+      case "start-now":
+        return startRun({ now: true });
       case "archive-this":
         return setArchived(ui.reportName, !ui.report?.archived);
       case "refresh-models":
@@ -2258,6 +2426,11 @@
       ui.lightReading = t.checked;
       savePrefs();
       return redrawModels();
+    }
+    if (t.id === "rs-auto") {
+      ui.autoContinue = t.checked;
+      savePrefs();
+      return undefined;
     }
     if (t.id === "rs-bq" || t.id === "rs-bsort") {
       if (t.id === "rs-bq") ui.brandQuery = t.value;

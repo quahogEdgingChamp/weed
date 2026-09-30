@@ -18,10 +18,13 @@ Endpoints alongside the page's own files:
                                 run and the saved reports
     GET  /api/research/models   ?provider=claude|codex[&refresh=1] -> the CLI's models
                                 and thinking levels (asks the CLI; sends no prompt)
-    POST /api/research/jobs     start a run: {topic, query, depth, provider, model, effort}
+    POST /api/research/jobs     start a run: {topic, query, depth, provider, model, effort,
+                                autoContinue}; with queue: true it waits behind the others
     POST /api/research/cancel   stop the current run (what was read is kept)
     POST /api/research/resume   continue a paused run: {checkpoint, provider, model, effort}
     DELETE /api/research/checkpoints/<id>   discard a paused run
+    DELETE /api/research/queue/<id>         take a run out of the queue
+    POST /api/research/queue/<id>/first     move it to the front
     POST /api/research/reports/<name>/archive   {archived: true|false}
     GET  /api/research/reports/<name>   one saved report
     DELETE /api/research/reports/<name>
@@ -440,7 +443,8 @@ def make_handler(site_dir: Path, data_path: Path, backup_dir: Path, research_dir
                 self.send_json({"error": "Not found"}, status=404)
                 return
 
-            self.save_state()
+            if self.same_origin():
+                self.save_state()
 
         def do_POST(self) -> None:
             path = urllib.parse.urlparse(self.path).path
@@ -457,6 +461,13 @@ def make_handler(site_dir: Path, data_path: Path, backup_dir: Path, research_dir
                 if self.same_origin():
                     jobs.stop()
                     self.send_json({"job": jobs.snapshot()})
+            elif path.startswith("/api/research/queue/") and path.endswith("/first"):
+                if self.same_origin():
+                    entry_id = urllib.parse.unquote(path.removeprefix("/api/research/queue/").removesuffix("/first"))
+                    if jobs.move_first(entry_id):
+                        self.send_json({"queue": jobs.queue_snapshot()})
+                    else:
+                        self.send_json({"error": "Not found"}, status=404)
             else:
                 self.do_PUT()
 
@@ -465,6 +476,13 @@ def make_handler(site_dir: Path, data_path: Path, backup_dir: Path, research_dir
             if path.startswith("/api/research/checkpoints/"):
                 if self.same_origin():
                     self.discard_checkpoint(urllib.parse.unquote(path.removeprefix("/api/research/checkpoints/")))
+                return
+            if path.startswith("/api/research/queue/"):
+                if self.same_origin():
+                    if jobs.remove(urllib.parse.unquote(path.removeprefix("/api/research/queue/"))):
+                        self.send_json({"queue": jobs.queue_snapshot()})
+                    else:
+                        self.send_json({"error": "Not found"}, status=404)
                 return
             if not path.startswith("/api/research/reports/"):
                 self.send_json({"error": "Not found"}, status=404)
@@ -644,6 +662,7 @@ def make_handler(site_dir: Path, data_path: Path, backup_dir: Path, research_dir
                 "llm": {k: v for k, v in research.llm_status().items() if k != "providers"},
                 "providers": llm.status(),
                 "job": jobs.snapshot(),
+                "queue": jobs.queue_snapshot(),
                 "reports": research.list_reports(research_dir),
                 "checkpoints": research.list_checkpoints(research_dir),
             })
@@ -684,20 +703,19 @@ def make_handler(site_dir: Path, data_path: Path, backup_dir: Path, research_dir
             model = body.get("model") if isinstance(body.get("model"), str) else ""
             effort = body.get("effort") if isinstance(body.get("effort"), str) else ""
             try:
-                job = jobs.resume(body["checkpoint"], provider or "none", model, effort, body.get("lightReading") is not False)
+                entry = jobs.resume_entry(body["checkpoint"], provider or "none", model, effort,
+                                          body.get("lightReading") is not False, body.get("autoContinue") is not False)
             except ValueError as error:
                 self.send_json({"error": str(error)}, status=400)
                 return
-            except RuntimeError as error:
-                self.send_json({"error": str(error), "job": jobs.snapshot()}, status=409)
-                return
-            self.send_json({"job": job}, status=202)
+            self.launch_or_queue(entry, queue=body.get("queue") is True)
 
         def discard_checkpoint(self, name: str) -> None:
             current = jobs.snapshot()
             if current and current["status"] == "running" and current.get("checkpoint") == name:
                 self.send_json({"error": "That run is going right now; stop it first."}, status=409)
             elif research.delete_checkpoint(research_dir, name):
+                jobs.forget(name)
                 self.send_json({"deleted": name})
             else:
                 self.send_json({"error": "Not found"}, status=404)
@@ -720,14 +738,23 @@ def make_handler(site_dir: Path, data_path: Path, backup_dir: Path, research_dir
             model = body.get("model") if isinstance(body.get("model"), str) else ""
             effort = body.get("effort") if isinstance(body.get("effort"), str) else ""
             try:
-                job = jobs.start(topic, query[:120], depth, provider, model, effort, body.get("lightReading") is not False)
+                entry = jobs.new_entry(topic, query[:120], depth, provider, model, effort,
+                                       body.get("lightReading") is not False, body.get("autoContinue") is not False)
             except ValueError as error:
                 self.send_json({"error": str(error)}, status=400)
                 return
+            self.launch_or_queue(entry, queue=body.get("queue") is True)
+
+        def launch_or_queue(self, entry: dict[str, Any], *, queue: bool) -> None:
+            """Start now, or with queue: true wait behind the other runs. Without
+            it, a second run while one is going is refused (409)."""
+            try:
+                queued = jobs.add(entry) if queue else None
+                job = jobs.snapshot() if queue else jobs.launch(entry)
             except RuntimeError as error:
                 self.send_json({"error": str(error), "job": jobs.snapshot()}, status=409)
                 return
-            self.send_json({"job": job}, status=202)
+            self.send_json({"job": job, "queued": queued, "queue": jobs.queue_snapshot()}, status=202)
 
         # ── plumbing ──
 

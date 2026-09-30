@@ -47,6 +47,7 @@ import re
 import threading
 import time
 import unicodedata
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1242,10 +1243,11 @@ class Paused(Exception):
     """A writer hit its plan's usage limit. The run is saved as a checkpoint
     and can continue later, with the same writer or another."""
 
-    def __init__(self, checkpoint: str, message: str, resets: str = ""):
+    def __init__(self, checkpoint: str, message: str, resets: str = "", *, limit: bool = False):
         super().__init__(message)
         self.checkpoint = checkpoint
         self.resets = resets
+        self.limit = limit  # a usage limit, which lifts by itself, not a failure
 
 
 CHECKPOINT_NAME = re.compile(r"[a-z0-9-]{1,80}-\d{8}T\d{6}Z")
@@ -1876,7 +1878,7 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
             message = f"{who} hit its plan's usage limit{done}" + (f"; it resets {resets}" if resets else "") + "."
             save("paused", reason=str(error)[:500], resets=resets, seconds=state["seconds"] + round(time.time() - writing_started))
             report("paused", message + " Saved: continue later, or finish with another writer.", checkpoint=state["id"])
-            raise Paused(state["id"], message, resets) from error
+            raise Paused(state["id"], message, resets, limit=True) from error
         except Cancelled:
             save("stopped", reason="Stopped by you.", resets="", seconds=state["seconds"] + round(time.time() - writing_started))
             raise
@@ -2072,14 +2074,42 @@ def list_reports(out_dir: Path) -> list[dict[str, Any]]:
 # ── Background jobs (used by serve.py) ────────────────────────────────────
 
 
+QUEUE_FILE = "queue.json"
+ENTRY_KEYS = ("kind", "topic", "label", "query", "depth", "provider", "model", "effort", "lightReading",
+              "autoContinue", "checkpoint", "tries")
+RESET_GRACE = 120  # seconds past a limit's stated reset before trying again
+UNKNOWN_RESET_WAIT = 3600  # when the CLI didn't say when its limit resets
+QUICK_PAUSE = 180  # a continue that hits the limit again this fast read nothing new
+QUICK_PAUSES = 6  # that many in a row and the run waits for you instead
+
+
+def iso_at(when: float) -> str:
+    return datetime.fromtimestamp(when, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 class Jobs:
-    """One research run at a time, in a thread, with a progress log to poll."""
+    """One research run at a time, in a thread, with a progress log to poll,
+    and a queue of runs waiting their turn (research/queue.json).
+
+    A run paused by a usage limit goes back to the front of the queue and
+    continues by itself once the limit resets; meanwhile runs for other
+    writers go ahead. The queue, and the run that was going, survive a
+    server restart."""
 
     def __init__(self, out_dir: Path) -> None:
         self.out_dir = out_dir
         self.lock = threading.Lock()
+        self.wake = threading.Condition(self.lock)
         self.job: dict[str, Any] | None = None
+        self.entry: dict[str, Any] | None = None  # what the running job was started from
         self.cancel = threading.Event()
+        self.queue: list[dict[str, Any]] = []
+        self.limited: dict[str, float] = {}  # writer -> Unix time its usage limit should have reset
+        self.recent: list[dict[str, Any]] = []  # the last few finished runs, for pages that missed the end
+        self.scheduler: threading.Thread | None = None
+        self._load_queue()
+
+    # ── What pages see ──
 
     def snapshot(self) -> dict[str, Any] | None:
         with self.lock:
@@ -2091,25 +2121,34 @@ class Jobs:
             snapshot.pop("stageStarted", None)
             return snapshot
 
+    def queue_snapshot(self) -> dict[str, Any]:
+        with self.lock:
+            now = time.time()
+            limited = {p: iso_at(t) for p, t in self.limited.items() if t > now}
+            entries = []
+            for entry in self.queue:
+                due = self._due(entry)
+                entries.append({**entry, "waitingUntil": iso_at(due) if due > now else None})
+            return {"entries": entries, "limited": limited, "recent": list(self.recent)}
+
     def busy(self) -> bool:
         return bool(self.job and self.job["status"] == "running")
 
-    def start(self, topic_key: str, query: str, depth: str, provider: str, model: str = "",
-              effort: str = "", light_reading: bool = True) -> dict[str, Any]:
+    # ── Building a run ──
+
+    def new_entry(self, topic_key: str, query: str, depth: str, provider: str, model: str = "", effort: str = "",
+                  light_reading: bool = True, auto_continue: bool = True) -> dict[str, Any]:
         resolve_topic(topic_key, query)  # raises ValueError on a bad request
         if depth not in DEPTHS:
             raise ValueError("Unknown depth.")
         model, effort = self._check(provider, model, effort)
         label = TOPICS[topic_key]["label"] if topic_key in TOPICS else query.strip()[:80]
-        return self._launch(
-            dict(topic=topic_key, label=label, query=query, depth=depth, provider=provider, model=model, effort=effort,
-                 lightReading=light_reading),
-            lambda cancel: run(topic_key, query, depth=depth, provider=provider, model=model, effort=effort,
-                               light_reading=light_reading,
-                               out_dir=self.out_dir, progress=self._progress, cancel=cancel))
+        return dict(kind="new", topic=topic_key, label=label, query=query, depth=depth, provider=provider,
+                    model=model, effort=effort, lightReading=light_reading, autoContinue=auto_continue,
+                    checkpoint=None, tries=0)
 
-    def resume(self, checkpoint: str, provider: str, model: str = "", effort: str = "",
-               light_reading: bool = True) -> dict[str, Any]:
+    def resume_entry(self, checkpoint: str, provider: str, model: str = "", effort: str = "",
+                     light_reading: bool = True, auto_continue: bool = True) -> dict[str, Any]:
         """Continue a paused/stopped/interrupted run, with any writer."""
         meta = next((m for m in list_checkpoints(self.out_dir) if m.get("id") == checkpoint), None)
         if meta is None:
@@ -2117,16 +2156,10 @@ class Jobs:
         if provider == "none":
             raise ValueError("Pick Claude, Codex or Grok to continue with.")
         model, effort = self._check(provider, model, effort)
-        with self.lock:
-            if self.job and self.job["status"] == "running" and self.job.get("checkpoint") == checkpoint:
-                raise RuntimeError("That run is already going.")
-        return self._launch(
-            dict(topic=meta["topic"]["key"], label=meta["topic"]["label"], query=meta["topic"].get("query") or "",
-                 depth=meta["depth"], provider=provider, model=model, effort=effort, checkpoint=checkpoint,
-                 resumed=True),
-            lambda cancel: resume(checkpoint, provider=provider, model=model, effort=effort,
-                                  light_reading=light_reading, out_dir=self.out_dir,
-                                  progress=self._progress, cancel=cancel))
+        return dict(kind="resume", topic=meta["topic"]["key"], label=meta["topic"]["label"],
+                    query=meta["topic"].get("query") or "", depth=meta["depth"], provider=provider, model=model,
+                    effort=effort, lightReading=light_reading, autoContinue=auto_continue, checkpoint=checkpoint,
+                    tries=0)
 
     @staticmethod
     def _check(provider: str, model: str, effort: str) -> tuple[str, str]:
@@ -2137,23 +2170,174 @@ class Jobs:
             raise ValueError(f"The {provider} CLI isn't installed here.")
         return model, effort
 
-    def _launch(self, fields: dict[str, Any], work: Callable[[threading.Event], Path]) -> dict[str, Any]:
+    def start(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.launch(self.new_entry(*args, **kwargs))
+
+    def resume(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.launch(self.resume_entry(*args, **kwargs))
+
+    # ── Running now, or queueing ──
+
+    def launch(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """Start a run now; RuntimeError while another is going."""
         with self.lock:
-            if self.job and self.job["status"] == "running":
+            if self.busy():
+                if entry.get("checkpoint") and self.job.get("checkpoint") == entry["checkpoint"]:
+                    raise RuntimeError("That run is already going.")
                 raise RuntimeError("A research run is already going.")
-            self.cancel = threading.Event()
-            self.job = {
-                "id": f"{int(time.time())}", "llm": fields["provider"] != "none", "status": "running",
-                "stage": "write" if fields.get("resumed") else "catalog", "stages": list(STAGES),
-                "startedAt": now_iso(), "finishedAt": None, "report": None, "error": None, "resets": "",
-                "checkpoint": fields.get("checkpoint"), "log": [], "counts": {}, **fields,
-            }
-            cancel = self.cancel
-        threading.Thread(target=self._run, args=(work, cancel), name="research", daemon=True).start()
+            self._forget_locked(entry.get("checkpoint"))  # started by hand, so no longer waiting in the queue
+            self._launch_locked(entry)
         return self.snapshot() or {}
+
+    def add(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """Queue a run behind the others. It starts at once if nothing is going."""
+        with self.lock:
+            if entry.get("checkpoint") and self.busy() and self.job.get("checkpoint") == entry["checkpoint"]:
+                raise RuntimeError("That run is already going.")
+            self._forget_locked(entry.get("checkpoint"))  # one place in the queue per paused run
+            entry = {**entry, "id": uuid.uuid4().hex[:10], "addedAt": now_iso()}
+            self.queue.append(entry)
+            self._pick()
+            self._save_queue()
+            self._kick()
+        return entry
+
+    def remove(self, entry_id: str) -> bool:
+        with self.lock:
+            kept = [e for e in self.queue if e["id"] != entry_id]
+            if len(kept) == len(self.queue):
+                return False
+            self.queue = kept
+            self._save_queue()
+            self.wake.notify_all()
+            return True
+
+    def move_first(self, entry_id: str) -> bool:
+        with self.lock:
+            entry = next((e for e in self.queue if e["id"] == entry_id), None)
+            if entry is None:
+                return False
+            self.queue.remove(entry)
+            self.queue.insert(0, entry)
+            self._save_queue()
+            self.wake.notify_all()
+            return True
+
+    def forget(self, checkpoint: str) -> None:
+        """A paused run was discarded: it no longer waits in the queue."""
+        with self.lock:
+            if self._forget_locked(checkpoint):
+                self._save_queue()
 
     def stop(self) -> None:
         self.cancel.set()
+
+    # ── Inside the lock ──
+
+    def _forget_locked(self, checkpoint: str | None) -> bool:
+        if not checkpoint:
+            return False
+        kept = [e for e in self.queue if e.get("checkpoint") != checkpoint]
+        changed = len(kept) != len(self.queue)
+        self.queue = kept
+        return changed
+
+    def _due(self, entry: dict[str, Any]) -> float:
+        """When a queued run may start: now, or once its writer's limit resets."""
+        return self.limited.get(entry.get("provider") or "", 0.0)
+
+    def _kick(self) -> None:
+        if self.scheduler is None or not self.scheduler.is_alive():
+            self.scheduler = threading.Thread(target=self._schedule, name="research-queue", daemon=True)
+            self.scheduler.start()
+        self.wake.notify_all()
+
+    def _launch_locked(self, entry: dict[str, Any]) -> None:
+        self.cancel = threading.Event()
+        resumed = entry["kind"] == "resume"
+        self.entry = {k: entry.get(k) for k in ENTRY_KEYS}
+        self.job = {
+            "id": f"{int(time.time() * 1000)}", "llm": entry["provider"] != "none", "status": "running",
+            "stage": "write" if resumed else "catalog", "stages": list(STAGES),
+            "startedAt": now_iso(), "finishedAt": None, "report": None, "error": None, "resets": "",
+            "continuesAt": None, "log": [], "counts": {}, "resumed": resumed, "fromQueue": "id" in entry,
+            **{k: entry.get(k) for k in ENTRY_KEYS if k != "kind"},
+        }
+        cancel = self.cancel
+        light = entry.get("lightReading") is not False
+        common = dict(provider=entry["provider"], model=entry.get("model") or "", effort=entry.get("effort") or "",
+                      light_reading=light, out_dir=self.out_dir, progress=self._progress)
+        if resumed:
+            work = lambda c: resume(entry["checkpoint"], cancel=c, **common)  # noqa: E731
+        else:
+            work = lambda c: run(entry["topic"], entry.get("query") or "", depth=entry["depth"],  # noqa: E731
+                                 cancel=c, **common)
+        self._save_queue()
+        threading.Thread(target=self._run, args=(work, cancel), name="research", daemon=True).start()
+
+    def _save_queue(self) -> None:
+        current = None
+        if self.busy() and self.entry:
+            checkpoint = self.job.get("checkpoint") or self.entry.get("checkpoint")
+            current = {**self.entry, "checkpoint": checkpoint, "kind": "resume" if checkpoint else self.entry["kind"]}
+        now = time.time()
+        try:
+            write_json(self.out_dir / QUEUE_FILE, {
+                "queue": self.queue, "current": current,
+                "limited": {p: t for p, t in self.limited.items() if t > now},
+            }, indent=1)
+        except OSError:
+            pass  # the queue still works; it just won't survive a restart
+
+    def _load_queue(self) -> None:
+        try:
+            saved = json.loads((self.out_dir / QUEUE_FILE).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(saved, dict):
+            return
+        good = lambda e: isinstance(e, dict) and e.get("kind") in ("new", "resume") and isinstance(e.get("id"), str)  # noqa: E731
+        self.queue = [e for e in saved.get("queue") or [] if good(e)]
+        self.limited = {p: float(t) for p, t in (saved.get("limited") or {}).items()
+                        if p in llm.PROVIDERS and isinstance(t, (int, float))}
+        current = saved.get("current")
+        # The server stopped mid-run: that run goes first again, from its
+        # checkpoint when it had one (a run that was still gathering starts
+        # over, mostly from the download cache).
+        if isinstance(current, dict) and current.get("kind") in ("new", "resume"):
+            if current["kind"] == "new" or read_checkpoint(self.out_dir, current.get("checkpoint") or ""):
+                self.queue = [e for e in self.queue if not current.get("checkpoint")
+                              or e.get("checkpoint") != current["checkpoint"]]
+                self.queue.insert(0, {**current, "id": uuid.uuid4().hex[:10], "addedAt": now_iso(), "restarted": True})
+        if self.queue:
+            with self.lock:
+                self._save_queue()
+                self._kick()
+
+    def _pick(self) -> bool:
+        """Start the first queued run that may start now, if nothing is going."""
+        if self.busy():
+            return False
+        now = time.time()
+        entry = next((e for e in self.queue if self._due(e) <= now), None)
+        if entry is None:
+            return False
+        self.queue.remove(entry)
+        self._launch_locked(entry)
+        return True
+
+    def _schedule(self) -> None:
+        with self.lock:
+            while self.queue:
+                if self._pick():
+                    continue
+                wait = 60.0
+                if not self.busy():
+                    wait = min(max(min(self._due(e) for e in self.queue) - time.time(), 1.0), 60.0)
+                self.wake.wait(timeout=wait)
+            self.scheduler = None
+
+    # ── The run itself ──
 
     def _progress(self, stage: str, message: str, **counts: Any) -> None:
         with self.lock:
@@ -2161,7 +2345,10 @@ class Jobs:
                 return
             # Two keys are about the run, not numbers to show.
             if "checkpoint" in counts:
-                self.job["checkpoint"] = counts.pop("checkpoint")
+                checkpoint = counts.pop("checkpoint")
+                if checkpoint != self.job.get("checkpoint"):
+                    self.job["checkpoint"] = checkpoint
+                    self._save_queue()  # a restart now continues from it
             counts.pop("report", None)
             starts = self.job.setdefault("stageStarted", {})
             if counts.pop("final_started", None):
@@ -2179,14 +2366,45 @@ class Jobs:
 
     def _finish(self, **fields: Any) -> None:
         with self.lock:
-            if self.job is not None:
-                self.job.update(fields, finishedAt=now_iso())
+            if self.job is None:
+                return
+            self.job.update(fields, finishedAt=now_iso())
+            provider = self.job.get("provider") or ""
+            if self.job["status"] == "done":
+                self.limited.pop(provider, None)  # it just worked, so the limit has lifted
+            self.recent.insert(0, {k: self.job.get(k) for k in ("id", "label", "status", "report", "error",
+                                                                 "continuesAt", "finishedAt")})
+            del self.recent[5:]
+            self._save_queue()
+            self.wake.notify_all()
+
+    def _after_limit(self, pause: Paused) -> None:
+        """Hold this writer until its limit resets, and queue the run to continue then."""
+        with self.lock:
+            job, entry = self.job, self.entry or {}
+            if job is None:
+                return
+            now = time.time()
+            reset = llm.reset_time(pause.resets, now)
+            until = max(reset + RESET_GRACE, now + 300) if reset else now + UNKNOWN_RESET_WAIT
+            provider = job.get("provider") or ""
+            self.limited[provider] = max(self.limited.get(provider, 0.0), until)
+            started = datetime.fromisoformat(job["startedAt"].replace("Z", "+00:00")).timestamp()
+            tries = (entry.get("tries") or 0) + 1 if now - started < QUICK_PAUSE else 1
+            if entry.get("autoContinue") is not False and tries <= QUICK_PAUSES:
+                self._forget_locked(pause.checkpoint)
+                self.queue.insert(0, {**entry, "kind": "resume", "checkpoint": pause.checkpoint, "tries": tries,
+                                      "id": uuid.uuid4().hex[:10], "addedAt": now_iso(), "auto": True})
+                job["continuesAt"] = iso_at(self.limited[provider])
+                self._kick()
 
     def _run(self, work: Callable[[threading.Event], Path], cancel: threading.Event) -> None:
         try:
             path = work(cancel)
             self._finish(status="done", stage="done", report=path.name, checkpoint=None)
         except Paused as pause:
+            if pause.limit:
+                self._after_limit(pause)
             self._finish(status="paused", error=str(pause), resets=pause.resets, checkpoint=pause.checkpoint)
         except Cancelled:
             self._progress("cancelled", "Stopped." + (" What was already read is saved; you can continue it."

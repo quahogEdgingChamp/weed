@@ -124,7 +124,32 @@ async function noHorizontalScroll(page) {
   return page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 }
 
+/* A queue the server finds at start: Claude is held by a usage limit, a
+   paused run waits to continue once it resets, and a new run waits behind
+   it. Nothing here can start, so the test never reaches Reddit or a model. */
+function plantResearchQueue() {
+  const research = path.join(WORK, "research");
+  fs.mkdirSync(path.join(research, "checkpoints"), { recursive: true });
+  const id = "hash-20260101T000000Z";
+  fs.writeFileSync(path.join(research, "checkpoints", `${id}.meta.json`), JSON.stringify({
+    id, topic: { key: "hash", label: "Hash & kief", query: "" }, depth: "deep", status: "paused",
+    reason: "usage limit", resets: "in 3 hours", provider: "claude", model: "", effort: "",
+    partsDone: 4, parts: 11, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
+  }));
+  const entry = (extra) => ({ query: "", depth: "quick", provider: "claude", model: "", effort: "", lightReading: true,
+                               autoContinue: true, tries: 0, addedAt: "2026-01-01T00:00:00Z", ...extra });
+  fs.writeFileSync(path.join(research, "queue.json"), JSON.stringify({
+    queue: [
+      entry({ id: "q-hash", kind: "resume", topic: "hash", label: "Hash & kief", depth: "deep", checkpoint: id, auto: true }),
+      entry({ id: "q-flower", kind: "new", topic: "flower", label: "Dried flower" }),
+    ],
+    limited: { claude: Date.now() / 1000 + 3 * 3600 },
+    current: null,
+  }));
+}
+
 (async () => {
+  plantResearchQueue();
   const port = await freePort();
   const server = spawn("python3", [path.join(ROOT, "serve.py"), "--port", String(port), "--data", DATA], { stdio: "ignore" });
   const url = `http://127.0.0.1:${port}/`;
@@ -433,6 +458,34 @@ async function noHorizontalScroll(page) {
     await synced(clearer);
     check(readData().products.length > 0, "restore brings the data back");
     await clearer.context().close();
+
+    step("Research queue");
+    const rs = await newPage(browser, `${url}?view=research`);
+    await rs.waitForSelector("#rs-queue-heading");
+    const titles = () => rs.$$eval("#rs-queue li .rs-eyebrow", (items) => items.map((i) => i.textContent));
+    let order = await titles();
+    check(order.length === 2 && /Hash/.test(order[0]) && /continues a paused run \(4 of 11 parts read\)/.test(order[0]),
+      "the paused run waits first in Up next, saying how far it got");
+    check(await rs.isVisible("#rs-queue >> text=/Waits for Claude's usage limit to reset, about/"), "says it waits for the limit");
+    check(!(await rs.isVisible("#rs-paused-heading")), "a queued paused run isn't listed twice");
+    await rs.click("#rs-queue li:nth-child(2) >> text=Move to front");
+    check(await waitFor(async () => /flower/i.test((await titles())[0])), "Move to front reorders the queue");
+    await rs.screenshot({ path: path.join(SHOTS, "research-queue.png"), fullPage: true });
+    await rs.click("#rs-queue li:has-text('Hash') >> text=Don't continue by itself");
+    await rs.waitForSelector("#rs-paused-heading");
+    order = await titles();
+    check(order.length === 1 && /flower/i.test(order[0]), "taking the paused run out leaves the other");
+    check(await rs.isVisible("#rs-paused >> text=Hash & kief"), "and puts it back under Waiting to continue");
+    check(JSON.parse(fs.readFileSync(path.join(WORK, "research", "queue.json"), "utf8")).queue.length === 1,
+      "the change is saved for restarts");
+    check(await noHorizontalScroll(rs), "no sideways scrolling");
+    check(rs.errors.length === 0, `research no script errors (${rs.errors.join(" | ")})`);
+    await rs.context().close();
+    const phone = await newPage(browser, `${url}?view=research`, { width: 390, height: 844 });
+    await phone.waitForSelector("#rs-queue-heading");
+    await phone.screenshot({ path: path.join(SHOTS, "w390-research-queue.png"), fullPage: true });
+    check(await noHorizontalScroll(phone), "390px research: no sideways scrolling");
+    await phone.context().close();
 
     /* ── Layout ────────────────────────────────────────────────────────── */
     step("Layouts");

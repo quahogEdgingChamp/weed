@@ -727,5 +727,179 @@ class ServerResearchTest(unittest.TestCase):
         self.assertEqual(job["counts"]["posts_scanned"], 5)
 
 
+    def test_queued_runs_start_one_after_another(self) -> None:
+        release = threading.Event()
+        started = []
+
+        def fake_run(topic_key, query, *, out_dir, progress, cancel, **_):
+            started.append(topic_key)
+            release.wait(5)
+            return Path(out_dir) / "reports" / self.plant_report(f"{topic_key}-20260101T000000Z.json")
+
+        with mock.patch.object(research, "run", fake_run):
+            status, body = self.request("POST", "/api/research/jobs", {"topic": "hash", "provider": "none", "queue": True})
+            self.assertEqual((status, body["job"]["status"], body["job"]["topic"]), (202, "running", "hash"))
+            status, body = self.request("POST", "/api/research/jobs", {"topic": "flower", "provider": "none", "queue": True})
+            self.assertEqual((status, body["queued"]["topic"]), (202, "flower"))
+            status, body = self.request("POST", "/api/research/jobs", {"topic": "rosin", "provider": "none", "queue": True})
+            rosin = body["queued"]["id"]
+            entries = self.request("GET", "/api/research")[1]["queue"]["entries"]
+            self.assertEqual([e["topic"] for e in entries], ["flower", "rosin"])
+            # Cross-site pages can't reorder or empty it.
+            self.assertEqual(self.request("POST", f"/api/research/queue/{rosin}/first", None,
+                                          {"Sec-Fetch-Site": "cross-site"})[0], 403)
+            self.assertEqual(self.request("POST", f"/api/research/queue/{rosin}/first")[0], 200)
+            self.assertEqual(self.request("DELETE", "/api/research/queue/nope")[0], 404)
+            entries = self.request("GET", "/api/research")[1]["queue"]["entries"]
+            self.assertEqual([e["topic"] for e in entries], ["rosin", "flower"])
+            self.assertEqual(self.request("DELETE", f"/api/research/queue/{entries[1]['id']}")[0], 200)
+            release.set()
+            for _ in range(100):
+                overview = self.request("GET", "/api/research")[1]
+                if overview["job"]["topic"] == "rosin" and overview["job"]["status"] == "done":
+                    break
+                time.sleep(0.05)
+        self.assertEqual(started, ["hash", "rosin"])
+        self.assertEqual(overview["queue"]["entries"], [])
+        self.assertEqual([(r["status"], r["report"]) for r in overview["queue"]["recent"]],
+                         [("done", "rosin-20260101T000000Z.json"), ("done", "hash-20260101T000000Z.json")])
+
+    def test_cross_site_state_write_is_refused(self) -> None:
+        status, _ = self.request("PUT", "/api/state", {"baseRevision": "x", "products": [], "wishlist": []},
+                                 {"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(status, 403)
+
+
+class QueueTest(unittest.TestCase):
+    """A usage limit sends the run back to the queue until the limit resets."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = Path(self.tmp.name)
+        patches = [mock.patch.object(research.llm, "binary", return_value="/bin/true")]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def wait_for(self, jobs, check):
+        for _ in range(200):
+            if check():
+                return
+            time.sleep(0.02)
+        self.fail(f"never happened; job={jobs.snapshot()} queue={jobs.queue_snapshot()}")
+
+    def test_reset_hints_become_times(self) -> None:
+        import llm
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        toronto = ZoneInfo("America/Toronto")
+        now = datetime(2026, 9, 25, 16, 0, tzinfo=toronto).timestamp()  # 4 pm
+        at = lambda *a: datetime(*a, tzinfo=toronto).timestamp()  # noqa: E731
+        local = lambda *a: datetime(*a).astimezone().timestamp()  # noqa: E731
+        self.assertEqual(llm.reset_time("5pm (America/Toronto)", now), at(2026, 9, 25, 17, 0))
+        self.assertEqual(llm.reset_time("3pm (America/Toronto)", now), at(2026, 9, 26, 15, 0))  # tomorrow
+        self.assertEqual(llm.reset_time("2 hours 5 minutes", now), now + 7500)
+        self.assertEqual(llm.reset_time("45m", now), now + 2700)
+        self.assertEqual(llm.reset_time("Sep 26th, 2026 7:21 PM", now), local(2026, 9, 26, 19, 21))
+        self.assertEqual(llm.reset_time("Sep 26, 19:21", now), local(2026, 9, 26, 19, 21))
+        self.assertEqual(llm.reset_time("Jan 2, 9am", now), local(2027, 1, 2, 9, 0))
+        for unreadable in ("", "soon", "25:99"):
+            self.assertIsNone(llm.reset_time(unreadable, now), unreadable)
+
+    def test_limit_requeues_the_run_and_other_writers_go_first(self) -> None:
+        calls = []
+        limit_once = {"hash": True}
+
+        def fake_run(topic_key, query, *, provider, out_dir, progress, cancel, **_):
+            calls.append(("run", topic_key, provider))
+            if limit_once.pop(topic_key, False):
+                progress("write", "checkpoint", checkpoint="hash-20260101T000000Z")
+                raise research.Paused("hash-20260101T000000Z", "Claude hit its plan's usage limit.",
+                                      "2 hours", limit=True)
+            return Path(out_dir) / f"{topic_key}.json"
+
+        def fake_resume(checkpoint, *, provider, out_dir, progress, cancel, **_):
+            calls.append(("resume", checkpoint, provider))
+            return Path(out_dir) / "hash.json"
+
+        with mock.patch.object(research, "run", fake_run), mock.patch.object(research, "resume", fake_resume):
+            jobs = research.Jobs(self.out)
+            jobs.add(jobs.new_entry("hash", "", "quick", "claude"))
+            jobs.add(jobs.new_entry("flower", "", "quick", "claude"))
+            jobs.add(jobs.new_entry("rosin", "", "quick", "codex"))
+            self.wait_for(jobs, lambda: ("run", "rosin", "codex") in calls and not jobs.busy())
+            queue = jobs.queue_snapshot()
+            # The paused hash run went back to the front; it and the other
+            # Claude run wait for the reset, the Codex run went ahead.
+            self.assertEqual([(e["kind"], e["topic"]) for e in queue["entries"]], [("resume", "hash"), ("new", "flower")])
+            self.assertTrue(all(e["waitingUntil"] for e in queue["entries"]))
+            self.assertIn("claude", queue["limited"])
+            self.assertEqual(queue["recent"][1]["status"], "paused")
+            self.assertTrue(queue["recent"][1]["continuesAt"])
+            # It survives a restart…
+            saved = json.loads((self.out / "queue.json").read_text())
+            self.assertEqual(len(saved["queue"]), 2)
+            # …and once the limit has reset, both Claude runs go, paused one first.
+            with jobs.lock:
+                jobs.limited["claude"] = time.time() - 1
+                jobs.wake.notify_all()
+            self.wait_for(jobs, lambda: len(calls) == 4 and not jobs.busy())
+        self.assertEqual(calls[2:], [("resume", "hash-20260101T000000Z", "claude"), ("run", "flower", "claude")])
+        self.assertNotIn("claude", jobs.queue_snapshot()["limited"])
+
+    def test_no_auto_continue_leaves_the_run_paused(self) -> None:
+        def fake_run(topic_key, query, *, out_dir, progress, cancel, **_):
+            raise research.Paused("hash-20260101T000000Z", "limit", "", limit=True)
+
+        with mock.patch.object(research, "run", fake_run):
+            jobs = research.Jobs(self.out)
+            jobs.add(jobs.new_entry("hash", "", "quick", "claude", auto_continue=False))
+            self.wait_for(jobs, lambda: jobs.snapshot()["status"] == "paused")
+        self.assertEqual(jobs.queue_snapshot()["entries"], [])
+        # A limit with no stated reset still holds that writer for a while.
+        self.assertIn("claude", jobs.queue_snapshot()["limited"])
+
+    def test_run_cut_off_by_a_restart_goes_first_again(self) -> None:
+        state = fake_state(2)
+        research.save_checkpoint(self.out, state)
+        (self.out / "queue.json").write_text(json.dumps({
+            "queue": [{"id": "later", "kind": "new", "topic": "flower", "label": "Flower", "query": "",
+                       "depth": "quick", "provider": "none"}],
+            "current": {"kind": "resume", "topic": "hash", "label": "Hash", "query": "", "depth": "deep",
+                        "provider": "claude", "model": "", "effort": "", "checkpoint": state["id"]},
+        }))
+        calls = []
+
+        def fake_resume(checkpoint, *, out_dir, progress, cancel, **_):
+            calls.append(checkpoint)
+            return Path(out_dir) / "hash.json"
+
+        def fake_run(topic_key, query, *, out_dir, progress, cancel, **_):
+            calls.append(topic_key)
+            return Path(out_dir) / "flower.json"
+
+        with mock.patch.object(research, "run", fake_run), mock.patch.object(research, "resume", fake_resume):
+            jobs = research.Jobs(self.out)
+            self.wait_for(jobs, lambda: len(calls) == 2 and not jobs.busy())
+        self.assertEqual(calls, [state["id"], "flower"])
+        self.assertIsNone(json.loads((self.out / "queue.json").read_text())["current"])
+
+    def test_discarding_a_paused_run_takes_it_out_of_the_queue(self) -> None:
+        state = fake_state(2)
+        research.save_checkpoint(self.out, state)
+        jobs = research.Jobs(self.out)
+        with jobs.lock:
+            jobs.limited["claude"] = time.time() + 3600
+        entry = jobs.add(jobs.resume_entry(state["id"], "claude"))
+        self.assertEqual([e["id"] for e in jobs.queue_snapshot()["entries"]], [entry["id"]])
+        jobs.add(jobs.resume_entry(state["id"], "claude"))  # queued twice = still once
+        self.assertEqual(len(jobs.queue_snapshot()["entries"]), 1)
+        jobs.forget(state["id"])
+        self.assertEqual(jobs.queue_snapshot()["entries"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

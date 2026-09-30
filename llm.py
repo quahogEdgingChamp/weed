@@ -108,6 +108,67 @@ def reset_hint(message: str) -> str:
     return ""
 
 
+MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+DATE_PART = re.compile(r"\b(" + "|".join(MONTHS) + r")[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s*(\d{4})\b)?")
+CLOCK_PART = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|\b(\d{1,2}):(\d{2})\b")
+SPAN_PART = re.compile(r"(\d+)\s*(days?|d|hours?|hrs?|h|minutes?|mins?|m)\b")
+
+
+def reset_time(hint: str, now: float | None = None) -> float | None:
+    """When a reset hint comes true, as a Unix time, or None if it can't be
+    read. Takes what reset_hint returns: "3pm (America/Toronto)", "Sep 25,
+    9am", "Sep 26th, 2026 7:21 PM", "Sep 26, 19:21", "2 hours 5 minutes"."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    now = time.time() if now is None else now
+    raw = (hint or "").strip()
+    zone = None
+    named = re.search(r"\(([A-Za-z_]+/[A-Za-z_/+-]+)\)", raw)
+    if named:
+        try:
+            zone = ZoneInfo(named.group(1))
+        except (ZoneInfoNotFoundError, ValueError):
+            zone = None
+        raw = raw.replace(named.group(0), " ")
+    text = raw.lower()
+
+    spans = SPAN_PART.findall(text)
+    if spans and not re.sub(r"\b(in|and)\b|[\s,]", "", SPAN_PART.sub("", text)):
+        unit = {"d": 86400, "h": 3600, "m": 60}
+        return now + sum(int(n) * unit[word[0]] for n, word in spans)
+
+    date = DATE_PART.search(text)
+    clock = CLOCK_PART.search(DATE_PART.sub(" ", text))
+    if not date and not clock:
+        return None
+    hour = minute = 0
+    if clock:
+        if clock.group(1):
+            hour, minute = int(clock.group(1)) % 12, int(clock.group(2) or 0)
+            hour += 12 if clock.group(3) == "pm" else 0
+        else:
+            hour, minute = int(clock.group(4)), int(clock.group(5))
+        if hour > 23 or minute > 59:
+            return None
+    # Naive when local, so .timestamp() applies the right DST offset for that date.
+    today = datetime.fromtimestamp(now, zone) if zone else datetime.fromtimestamp(now)
+    try:
+        if date:
+            year = int(date.group(3)) if date.group(3) else today.year
+            when = today.replace(year=year, month=MONTHS.index(date.group(1)[:3]) + 1, day=int(date.group(2)),
+                                 hour=hour, minute=minute, second=0, microsecond=0)
+            if not date.group(3) and when.timestamp() < now - 86400:
+                when = when.replace(year=year + 1)  # "Jan 2" said on Dec 31
+        else:
+            when = today.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if when.timestamp() < now - 60:
+                when += timedelta(days=1)  # "3pm" said at 5pm means tomorrow
+    except ValueError:
+        return None
+    return when.timestamp()
+
+
 def binary(provider: str) -> str | None:
     """The CLI's path. The service's PATH lacks ~/.local/bin, so look there too."""
     name = {"claude": "claude", "codex": "codex", "grok": "grok"}.get(provider)
