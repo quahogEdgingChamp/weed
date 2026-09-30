@@ -80,6 +80,8 @@ async function onClick(event) {
       return startRun();
     case "start-now":
       return startRun({ now: true });
+    case "deck":
+      return openDeck();
     case "archive-this":
       return setArchived(ui.reportName, !ui.report?.archived);
     case "refresh-models":

@@ -137,9 +137,17 @@ dependencies.
   volume, brand mention sparklines; each card links to OCS, store prices and
   the latest posts, and adds straight to the shopping list (and says if it's
   already in your collection, with your rating)
+- **Sort through** on a guide: its products one at a time, best tier
+  first, as cards you swipe or answer with keys: → onto the shopping list,
+  ↑ a must-try (on the list at high priority), ← not for me, ↓ skip for
+  now, U undo (an add comes back off the list), Esc to close. Products you
+  own or already listed are left out, and decisions are remembered per
+  guide in this browser, so the next visit starts where you stopped
 - While a run goes, the progress panel says roughly how long is left: from
   this run's own pace once parts finish, before that from past runs with the
-  same writer, model and thinking level (`research/cache/timing.json`)
+  same writer, model and thinking level (`research/cache/timing.json`).
+  **Full log** under it groups everything the run said by step, folds
+  repeated progress lines and marks problems (failed, timed out, limit…)
 - Guides are saved and can be reopened, re-run, archived or deleted; the
   list sorts by date, who wrote it, depth, topic, comments read or product
   count, with separate Active and Archived views. "Who wrote it" groups

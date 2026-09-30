@@ -5,6 +5,7 @@
 /* What the Research tab (js/3x-research-*.js) may use from the page. */
 window.Cloudline = {
   addResearchPick,
+  removeResearchPick,
   researchOwnership,
   showTerpene,
   closeTerpene,

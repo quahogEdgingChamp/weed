@@ -114,13 +114,17 @@ async function lookupForShopping(url, { skipDuplicateCheck = false } = {}) {
 
 /* The Research tab (js/3x-research-*.js) adds picks to the list through here, so a
    research card and a pasted link end up as the same kind of item. */
-async function addResearchPick({ url = "", name = "", brand = "", price = null, note = "" }) {
+/* Returns { status: "added" | "exists" | "failed", id } so the Research
+   deck can undo an add with removeResearchPick. */
+async function addResearchPick({ url = "", name = "", brand = "", price = null, note = "", priority = "normal", quiet = false }) {
   const { wish } = findByLink(url);
   if (wish) {
-    showToast(`“${wish.name}” is already on your shopping list.`, {
-      action: { label: "Show", run: () => { showView("shopping", { push: true }); highlightWish(wish.id); } },
-    });
-    return "exists";
+    if (!quiet) {
+      showToast(`“${wish.name}” is already on your shopping list.`, {
+        action: { label: "Show", run: () => { showView("shopping", { push: true }); highlightWish(wish.id); } },
+      });
+    }
+    return { status: "exists", id: wish.id };
   }
 
   let item = { name, brand, price, url };
@@ -136,20 +140,32 @@ async function addResearchPick({ url = "", name = "", brand = "", price = null, 
     ...item,
     id: uuid(),
     addedAt: new Date().toISOString(),
-    priority: "normal",
+    priority: ["high", "normal", "low"].includes(priority) ? priority : "normal",
     shoppingNote: note,
   });
   if (!value) {
-    return "failed";
+    return { status: "failed", id: null };
   }
   commit((data) => {
     data.wishlist = [value, ...data.wishlist];
   }, { render: false });
   renderCounts();
-  showToast(`Added ${value.name} to your shopping list.`, {
-    action: { label: "View", run: () => { showView("shopping", { push: true }); highlightWish(value.id); } },
-  });
-  return "added";
+  if (!quiet) {
+    showToast(`Added ${value.name} to your shopping list.`, {
+      action: { label: "View", run: () => { showView("shopping", { push: true }); highlightWish(value.id); } },
+    });
+  }
+  return { status: "added", id: value.id };
+}
+
+/* Undo for the Research deck: take an item it added back off the list. */
+function removeResearchPick(id) {
+  if (!state.data.wishlist.some((item) => item.id === id)) return false;
+  commit((data) => {
+    data.wishlist = data.wishlist.filter((item) => item.id !== id);
+  }, { render: false });
+  renderCounts();
+  return true;
 }
 
 function researchOwnership(url) {

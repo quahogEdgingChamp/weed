@@ -150,6 +150,8 @@ function drawReport() {
       <div class="rs-report-top">
         <button class="btn btn-ghost btn-small rs-back" type="button" data-home>← All research</button>
         <div class="rs-report-actions">
+          ${(g.products || []).length ? `<button class="btn btn-primary btn-small" type="button" data-act="deck"
+            title="Go through the products one at a time: shopping list, must try, or not for me">Sort through</button>` : ""}
           ${archiveThisButton()}
           <button class="btn btn-secondary btn-small" type="button" data-act="rerun">
             <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg> Run again

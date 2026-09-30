@@ -6083,3 +6083,99 @@ p.rs-solo {
     transition: none;
   }
 }
+
+/* ── Research: the guide deck ── */
+
+.rs-deck {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--s-3);
+  padding: var(--s-3) max(var(--s-3), calc((100vw - 640px) / 2)) max(var(--s-3), env(safe-area-inset-bottom));
+  background: var(--plane);
+  overflow: hidden;
+}
+
+.rs-deck-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.rs-deck-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rs-deck-stage {
+  display: grid;
+  align-items: center;
+  min-height: 0;
+}
+
+.rs-deck-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  max-height: 100%;
+  padding: var(--s-5);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+
+.rs-deck-card:active {
+  cursor: grabbing;
+}
+
+.rs-deck-top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+
+.rs-deck-top h2 {
+  font-family: var(--display);
+  font-size: clamp(1.2rem, 4vw, 1.6rem);
+  line-height: 1.2;
+}
+
+.rs-deck-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
+
+.rs-deck-end {
+  align-items: flex-start;
+  cursor: default;
+}
+
+.rs-deck-actions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--s-2);
+}
+
+.rs-deck-actions .btn {
+  min-height: 48px;
+  white-space: normal;
+}
+
+@media (max-width: 520px) {
+  .rs-deck-actions {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
