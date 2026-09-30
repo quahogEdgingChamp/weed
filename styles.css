@@ -2170,9 +2170,177 @@ thead th {
   font-size: 0.84rem;
 }
 
+.terpene-list li:has(> .terp-chip) {
+  padding: 0;
+  background: none;
+}
+
+.wish-terpenes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A terpene you can tap for its card. */
+.terp-chip {
+  padding: 0.2rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.84rem;
+  text-decoration: underline dotted var(--ink-3);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.terp-chip:hover {
+  border-color: var(--accent);
+}
+
+.terp-chip[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+
+/* The terpene card: beside the chip on a wide screen, a bottom sheet on a phone. */
+.terp-card {
+  position: fixed;
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  width: min(340px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop);
+}
+
+.terp-card.is-sheet {
+  top: auto !important;
+  right: 0;
+  bottom: 0;
+  left: 0 !important;
+  width: 100%;
+  max-height: 75vh;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  border-width: 1px 0 0;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  animation: terp-sheet-in 0.18s ease-out;
+}
+
+@keyframes terp-sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terp-card.is-sheet {
+    animation: none;
+  }
+}
+
+.terp-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.terp-card-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.terp-card-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink-3);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.terp-card-effects .chip-row {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.terp-effect {
+  display: inline-flex;
+  padding: 0.14rem 0.6rem;
+  border-radius: 999px;
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.terp-card-facts {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.terp-card-facts div {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr;
+  gap: var(--s-2);
+}
+
+.terp-card-facts dt {
+  color: var(--ink-3);
+  font-size: 0.8rem;
+}
+
+.terp-card-facts dd {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.terp-card-stats {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+  color: var(--ink-2);
+  font-size: 0.84rem;
+}
+
+.terp-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.terp-card-note {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 0.74rem;
+}
+
 .prose {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.detail-link {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
 }
 
 .detail-link a {
@@ -3434,12 +3602,35 @@ label.rs-option-label {
   font-size: 0.76rem;
 }
 
+/* Sticks under the app bar; the negative margins let its background run to
+   the page gutter so cards don't show through at the edges. */
 .rs-toc {
+  position: sticky;
+  top: var(--appbar-h, 57px);
+  z-index: 15;
   display: flex;
   gap: var(--s-1);
   overflow-x: auto;
-  padding-bottom: 2px;
-  scrollbar-width: thin;
+  margin-inline: calc(-1 * var(--gutter));
+  padding: 8px var(--gutter);
+  background: color-mix(in srgb, var(--plane) 94%, transparent);
+  backdrop-filter: blur(8px);
+  scrollbar-width: none;
+}
+
+.rs-toc::-webkit-scrollbar {
+  display: none;
+}
+
+.rs-toc.is-stuck {
+  border-bottom: 1px solid var(--line);
+}
+
+.rs-toc button[aria-current] {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  font-weight: 600;
 }
 
 .rs-toc button {
@@ -3464,11 +3655,11 @@ label.rs-option-label {
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
-  scroll-margin-top: 120px;
+  scroll-margin-top: calc(var(--appbar-h, 57px) + 64px);
 }
 
 .rs-card {
-  scroll-margin-top: 120px;
+  scroll-margin-top: calc(var(--appbar-h, 57px) + 64px);
 }
 
 .rs-foot {
@@ -4953,6 +5144,31 @@ thead th {
   min-width: 190px;
 }
 
+/* "Who wrote it", "Deepest first" and "Topic" split the list under headings. */
+.rs-list-group + .rs-list-group {
+  margin-top: var(--s-4);
+}
+
+.rs-list-group-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--s-2);
+  margin: 0 0 var(--s-2);
+  font-size: 0.95rem;
+}
+
+.rs-list-group-detail {
+  color: var(--ink-3);
+  font-size: 0.82rem;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.rs-list-group-title .tab-count {
+  align-self: center;
+}
+
 .rs-item-actions {
   display: flex;
   flex: none;
@@ -5082,6 +5298,112 @@ thead th {
 
 .rs-uses .rs-hint {
   margin-right: 2px;
+}
+
+/* ── Terpenes ── */
+
+.rs-terp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: var(--s-2);
+}
+
+.rs-terp {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rs-terp:hover {
+  border-color: var(--line-strong);
+}
+
+.rs-terp[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-ring);
+}
+
+.rs-terp small {
+  color: var(--ink-3);
+  font-size: 0.76rem;
+  line-height: 1.3;
+}
+
+.rs-terp-bar {
+  width: 100%;
+  height: 4px;
+  margin-top: auto;
+  border-radius: 999px;
+  background: var(--surface-3);
+}
+
+.rs-terp-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.rs-terp-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.rs-terp-top {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.rs-terp-top li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.rs-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-ink);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+button.rs-terp-chip {
+  border: 1px solid transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button.rs-terp-chip:hover {
+  border-color: var(--accent);
+}
+
+button.rs-terp-chip.is-on,
+button.rs-terp-chip[aria-expanded="true"] {
+  background: var(--accent);
+  color: var(--on-accent, #fff);
 }
 
 .rs-use {

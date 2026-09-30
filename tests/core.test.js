@@ -172,3 +172,19 @@ test("trash keeps 30 days", () => {
   );
   assert.deepEqual(kept.map((item) => item.id), ["a"]);
 });
+
+test("terpene spellings reduce to one key, with notes for the card", () => {
+  assert.equal(Core.terpeneKey("Beta-Myrcene"), "myrcene");
+  assert.equal(Core.terpeneKey("β-Caryophyllene 0.6%"), "caryophyllene");
+  assert.equal(Core.terpeneKey("Limonene (1.2%)"), "limonene");
+  assert.equal(Core.terpeneKey("alpha-Caryophyllene"), "humulene");
+  assert.equal(Core.terpeneKey("Delta-3-Carene"), "carene");
+  assert.equal(Core.terpeneKey("Terpenes removed"), null);
+  assert.deepEqual(Core.terpeneKeys("Limonene, Beta-Myrcene 0.4%; limonene · Pinene"), ["limonene", "myrcene", "pinene"]);
+
+  const linalool = Core.terpeneInfo("Linalool");
+  assert.equal(linalool.known, true);
+  assert.ok(linalool.effects.includes("Sleepy"));
+  const unknown = Core.terpeneInfo("Xyzene");
+  assert.deepEqual([unknown.known, unknown.name, unknown.effects], [false, "Xyzene", []]);
+});

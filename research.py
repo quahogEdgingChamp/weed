@@ -2049,6 +2049,7 @@ def list_reports(out_dir: Path) -> list[dict[str, Any]]:
         except (OSError, json.JSONDecodeError):
             continue
         guide = doc.get("guide") or {}
+        writer = doc.get("writer") or {}
         rows.append({
             "name": path.name,
             "topic": doc.get("topic"),
@@ -2056,8 +2057,10 @@ def list_reports(out_dir: Path) -> list[dict[str, Any]]:
             "depth": doc.get("depth"),
             "headline": guide.get("headline"),
             "products": len(guide.get("products") or []),
-            "by": (doc.get("writer") or {}).get("by"),
-            "model": (doc.get("writer") or {}).get("model"),
+            "by": writer.get("by"),
+            "model": writer.get("model"),
+            "effort": writer.get("effort") if writer.get("by") not in (None, "counts") else None,
+            "readers": writer.get("readers"),
             "archived": bool(doc.get("archived")),
             "archivedAt": doc.get("archivedAt"),
             "stats": doc.get("stats"),

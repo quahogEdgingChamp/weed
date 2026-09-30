@@ -12,6 +12,8 @@ Endpoints alongside the page's own files:
     GET  /api/snapshots         dated copies kept before risky writes
     GET  /api/snapshots/<name>  one of those copies, for preview and restore
     GET  /api/lookup            ?url=<ocs.ca product link> -> prefilled fields
+    GET  /api/hibuddy           ?name=&brand=&type= -> 302 to the product's page on
+                                hibuddy.ca, or to a hibuddy search if none fits
     GET  /api/research          topics, whether Claude is available, the current
                                 run and the saved reports
     GET  /api/research/models   ?provider=claude|codex[&refresh=1] -> the CLI's models
@@ -47,6 +49,7 @@ from pathlib import Path
 from typing import Any
 
 import llm
+import hibuddy
 import ocs
 import research
 
@@ -419,6 +422,8 @@ def make_handler(site_dir: Path, data_path: Path, backup_dir: Path, research_dir
                 self.send_snapshot(path.removeprefix("/api/snapshots/"))
             elif path == "/api/lookup":
                 self.send_lookup()
+            elif path == "/api/hibuddy":
+                self.send_hibuddy()
             elif path == "/api/research":
                 self.send_research_overview()
             elif path == "/api/research/models":
@@ -618,6 +623,16 @@ def make_handler(site_dir: Path, data_path: Path, backup_dir: Path, research_dir
 
             item["lookedUpAt"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             self.send_json({"item": item})
+
+        def send_hibuddy(self) -> None:
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            name, brand, kind = ((query.get(key) or [""])[0][:200] for key in ("name", "brand", "type"))
+            url = hibuddy.find(name, brand, kind) or hibuddy.search_url(name, brand)
+            self.send_response(302)
+            self.send_header("Location", url)
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
 
         # ── research ──
 

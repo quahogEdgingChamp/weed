@@ -13,6 +13,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -54,6 +55,16 @@ class ServerTest(unittest.TestCase):
     def put(self, revision: str, products=None, **extra):
         body = {"baseRevision": revision, "products": products or [], "wishlist": [], **extra}
         return self.request("PUT", "/api/state", body)
+
+    def test_hibuddy_redirects_to_the_product_or_a_search(self) -> None:
+        found = "https://hibuddy.ca/product/" + "a" * 32
+        with mock.patch.object(serve.hibuddy, "find", return_value=found) as find:
+            status, _, response = self.request("GET", "/api/hibuddy?name=G%20Mint&brand=Tribal&type=cart")
+        self.assertEqual((status, response.getheader("Location")), (302, found))
+        find.assert_called_once_with("G Mint", "Tribal", "cart")
+        with mock.patch.object(serve.hibuddy, "find", return_value=None):
+            status, _, response = self.request("GET", "/api/hibuddy?name=G%20Mint&brand=Tribal")
+        self.assertEqual((status, response.getheader("Location")), (302, "https://hibuddy.ca/products/search?q=Tribal+G+Mint"))
 
     def test_empty_server_reports_missing_file(self) -> None:
         status, body, _ = self.request("GET", "/api/state")

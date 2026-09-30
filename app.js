@@ -68,6 +68,7 @@ const LEGACY_WISHLIST_KEY = "cloudline-shopping-list-v1";
 const SYNC_ENDPOINT = "/api/state";
 const SNAPSHOT_ENDPOINT = "/api/snapshots";
 const LOOKUP_ENDPOINT = "/api/lookup";
+const HIBUDDY_ENDPOINT = "/api/hibuddy";
 const POLL_MS = 5000;
 const SAVE_DEBOUNCE_MS = 400;
 const RETRY_MIN_MS = 2000;
@@ -663,6 +664,23 @@ function iconButton(symbol, label, onClick, { danger = false, pressed = null, te
   );
 }
 
+// The server finds the product's own hibuddy page and redirects there, so the
+// link needs no lookup until it is actually opened.
+function hibuddyHref(item) {
+  const params = new URLSearchParams({ name: item.name || "", brand: item.brand || "", type: item.type || "" });
+  return `${HIBUDDY_ENDPOINT}?${params}`;
+}
+
+function hibuddyLink(item, { text = "" } = {}) {
+  const label = `Compare store prices for ${item.name} on hibuddy`;
+  return h(
+    "a",
+    { class: "icon-button", href: hibuddyHref(item), target: "_blank", rel: "noopener noreferrer", title: label, "aria-label": label },
+    icon("i-price"),
+    text ? h("span", { class: "icon-button-text", "aria-hidden": "true", text }) : null
+  );
+}
+
 function chip(text, extraClass = "") {
   return h("span", { class: `chip ${extraClass}`.trim(), text });
 }
@@ -1090,6 +1108,7 @@ function entryRow(entry) {
         text: "Favorite",
         focusKey: `fav:${entry.id}`,
       }),
+      hibuddyLink(entry, { text: "Prices" }),
       iconButton("i-pencil", `Edit ${entry.name}`, () => openEntryForm({ mode: "edit", entryId: entry.id }), { text: "Edit", focusKey: `edit:${entry.id}` }),
       iconButton("i-trash", `Delete ${entry.name}`, () => deleteEntries([entry.id]), { danger: true, text: "Delete" })
     )
@@ -1854,7 +1873,7 @@ function renderDetail(entryId) {
 
   if (entry.terpenes) {
     const list = entry.terpenes.split(/[,;·]/).map((item) => item.trim()).filter(Boolean);
-    view.appendChild(detailSection("Terpene breakdown", h("ul", { class: "terpene-list" }, list.map((item) => h("li", { text: item })))));
+    view.appendChild(detailSection("Terpene breakdown", h("ul", { class: "terpene-list" }, list.map((item) => h("li", null, terpeneButton(item) || item)))));
   }
 
   if (entry.effects) {
@@ -1865,15 +1884,14 @@ function renderDetail(entryId) {
     view.appendChild(detailSection("Notes", h("p", { class: "prose private", text: entry.notes })));
   }
 
-  if (entry.sourceUrl) {
-    view.appendChild(
-      h(
-        "p",
-        { class: "detail-link" },
-        h("a", { href: entry.sourceUrl, target: "_blank", rel: "noopener noreferrer" }, icon("i-external"), "Open the product page")
-      )
-    );
-  }
+  view.appendChild(
+    h(
+      "p",
+      { class: "detail-link" },
+      entry.sourceUrl ? h("a", { href: entry.sourceUrl, target: "_blank", rel: "noopener noreferrer" }, icon("i-external"), "Open the product page") : null,
+      h("a", { href: hibuddyHref(entry), target: "_blank", rel: "noopener noreferrer" }, icon("i-price"), "Store prices on hibuddy")
+    )
+  );
 
   const related = relatedPurchases(state.data.products, entry);
   if (related.length > 1) {
@@ -2719,9 +2737,162 @@ function researchOwnership(url) {
   };
 }
 
+/* ── Terpene card ──────────────────────────────────────────────────────────
+   Tapping a terpene anywhere opens a small card: what it smells like, the
+   effects people link it with, and how it has gone for you. A tap works on a
+   phone where a hover tooltip never shows. The card sits beside the tapped
+   chip on a wide screen and slides up from the bottom on a narrow one.
+   Callers can add lines (`stats`) and buttons (`actions`) of their own. */
+
+const terpeneCard = { el: null, anchor: null };
+
+/* How the terpene has gone in the user's own collection. */
+function terpeneHistory(key) {
+  const withIt = state.data.products.filter((entry) => Core.terpeneKeys(entry.terpenes).includes(key));
+  if (!withIt.length) return "Not in anything you've logged yet.";
+  const rated = withIt.filter((entry) => typeof entry.rating === "number");
+  const average = rated.length ? rated.reduce((sum, entry) => sum + entry.rating, 0) / rated.length : null;
+  const count = `${withIt.length} ${withIt.length === 1 ? "entry" : "entries"}`;
+  return average === null ? `In ${count} you've logged, none rated yet.` : `In ${count} you've logged, rated ${average.toFixed(1)} / 10 on average.`;
+}
+
+function showTerpene(anchor, raw, { stats = [], actions = [] } = {}) {
+  const info = Core.terpeneInfo(raw);
+  if (!info) return;
+  if (terpeneCard.el && terpeneCard.anchor === anchor) {
+    closeTerpene({ restoreFocus: true });
+    return;
+  }
+  closeTerpene();
+
+  const facts = [
+    ["Smells like", info.aroma],
+    [info.flavour ? "Note" : "What people say", info.flavour ? "A flavour compound, not a terpene; often added for taste." : info.linked],
+    ["Also found in", info.also],
+  ].filter(([, value]) => value);
+  const titleId = "terp-card-title";
+  const card = h(
+    "div",
+    { class: "terp-card", role: "dialog", "aria-labelledby": titleId, tabindex: "-1" },
+    h(
+      "div",
+      { class: "terp-card-head" },
+      h("h2", { id: titleId, class: "terp-card-title", text: info.name }),
+      h("button", { type: "button", class: "btn btn-icon terp-card-close", "aria-label": "Close", onClick: () => closeTerpene({ restoreFocus: true }) }, icon("i-close"))
+    ),
+    info.effects.length
+      ? h(
+          "div",
+          { class: "terp-card-effects" },
+          h("span", { class: "terp-card-label", text: "Main effects" }),
+          h("ul", { class: "chip-row" }, info.effects.map((effect) => h("li", { class: "terp-effect", text: effect })))
+        )
+      : null,
+    facts.length
+      ? h("dl", { class: "terp-card-facts" }, facts.map(([label, value]) => h("div", null, h("dt", { text: label }), h("dd", { text: value }))))
+      : h("p", { class: "muted", text: "No notes on this one yet." }),
+    h(
+      "ul",
+      { class: "terp-card-stats" },
+      [...stats, terpeneHistory(info.key)].filter(Boolean).map((line) => h("li", { text: line }))
+    ),
+    actions.length
+      ? h(
+          "div",
+          { class: "terp-card-actions" },
+          actions.map((action, index) =>
+            h("button", {
+              type: "button",
+              class: `btn btn-small ${index ? "btn-ghost" : "btn-secondary"}`,
+              text: action.label,
+              onClick: () => {
+                closeTerpene();
+                action.run();
+              },
+            })
+          )
+        )
+      : null,
+    info.flavour ? null : h("p", { class: "terp-card-note", text: "What people commonly report, not settled science. The whole plant matters more than any one terpene." })
+  );
+
+  document.body.appendChild(card);
+  terpeneCard.el = card;
+  terpeneCard.anchor = anchor;
+  anchor.setAttribute("aria-expanded", "true");
+  placeTerpene();
+  card.querySelector(".terp-card-close").focus({ preventScroll: true });
+}
+
+function placeTerpene() {
+  const { el, anchor } = terpeneCard;
+  if (!el) return;
+  const sheet = window.matchMedia("(max-width: 560px)").matches;
+  el.classList.toggle("is-sheet", sheet);
+  if (sheet || !anchor.isConnected) {
+    el.style.left = el.style.top = "";
+    return;
+  }
+  const gap = 8;
+  const box = anchor.getBoundingClientRect();
+  const width = el.offsetWidth;
+  const height = el.offsetHeight;
+  const left = Math.min(Math.max(gap, box.left), window.innerWidth - width - gap);
+  const below = box.bottom + gap;
+  const top = Math.max(gap, below + height <= window.innerHeight - gap ? below : box.top - height - gap);
+  el.style.left = `${left}px`;
+  el.style.top = `${top}px`;
+}
+
+function closeTerpene({ restoreFocus = false } = {}) {
+  const { el, anchor } = terpeneCard;
+  if (!el) return;
+  el.remove();
+  terpeneCard.el = terpeneCard.anchor = null;
+  anchor?.setAttribute("aria-expanded", "false");
+  if (restoreFocus && anchor?.isConnected) anchor.focus({ preventScroll: true });
+}
+
+/* Capture phase, so Escape closes the card before it closes a drawer under it. */
+window.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key === "Escape" && terpeneCard.el) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeTerpene({ restoreFocus: true });
+    }
+  },
+  true
+);
+document.addEventListener("pointerdown", (event) => {
+  if (terpeneCard.el && !terpeneCard.el.contains(event.target) && !terpeneCard.anchor?.contains(event.target)) closeTerpene();
+});
+document.addEventListener("focusin", (event) => {
+  if (terpeneCard.el && !terpeneCard.el.contains(event.target) && event.target !== terpeneCard.anchor) closeTerpene();
+});
+window.addEventListener("resize", placeTerpene);
+window.addEventListener("scroll", placeTerpene, { capture: true, passive: true });
+
+/* A tappable terpene chip for the Collection and Shopping list. */
+function terpeneButton(raw) {
+  const key = Core.terpeneKey(raw);
+  if (!key) return null;
+  return h("button", {
+    type: "button",
+    class: "terp-chip",
+    "aria-haspopup": "dialog",
+    "aria-expanded": "false",
+    text: String(raw).trim(),
+    onClick: (event) => showTerpene(event.currentTarget, raw),
+  });
+}
+
 window.Cloudline = {
   addResearchPick,
   researchOwnership,
+  showTerpene,
+  closeTerpene,
   openEntry: (id) => openDetail(id),
   toast: (message) => showToast(message),
   get privacy() {
@@ -2943,7 +3114,7 @@ function wishlistCard(item, match) {
       )
     ),
     chips.childElementCount ? chips : null,
-    item.terpenes.length ? h("p", { class: "wish-terpenes", text: item.terpenes.join(" · ") }) : null,
+    item.terpenes.length ? h("ul", { class: "wish-terpenes terpene-list" }, item.terpenes.map((terpene) => h("li", null, terpeneButton(terpene) || terpene))) : null,
     item.shoppingNote ? h("p", { class: "wish-note" }, icon("i-note"), h("span", { text: item.shoppingNote })) : null,
     item.preferredVendor ? h("p", { class: "wish-meta", text: `Preferred store: ${item.preferredVendor}` }) : null,
     match && match.score
@@ -2976,6 +3147,7 @@ function wishlistCard(item, match) {
         item.url
           ? h("a", { class: "icon-button", href: item.url, target: "_blank", rel: "noopener noreferrer", title: "Open on ocs.ca", "aria-label": `Open ${item.name} on ocs.ca` }, icon("i-external"))
           : null,
+        hibuddyLink(item),
         iconButton("i-pencil", `Edit ${item.name}`, () => editWishItem(item.id), { focusKey: `wish-edit:${item.id}` }),
         iconButton("i-trash", `Remove ${item.name}`, () => removeWishlistItem(item.id), { danger: true }),
         h("button", { type: "button", class: "btn btn-primary btn-small", "data-focus-key": `wish-log:${item.id}`, onclick: () => logPurchase(item.id) }, "Log purchase")

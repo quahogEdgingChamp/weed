@@ -58,8 +58,9 @@
     reportName: null,
     report: null,
     reportError: "",
-    filters: { q: "", tier: "", lean: "", plant: "", use: "", brand: "", solo: false, sort: "score", online: false },
+    filters: { q: "", tier: "", lean: "", plant: "", use: "", brand: "", terp: "", solo: false, sort: "score", online: false },
     brandQuery: "",
+    terp: "",
     brandSort: "tier",
     table: { key: "score", asc: false },
     resizeTimer: null,
@@ -694,24 +695,90 @@
   const LIST_SORTS = [
     ["newest", "Newest first"],
     ["oldest", "Oldest first"],
-    ["topic", "Topic A–Z"],
+    ["writer", "Who wrote it"],
     ["depth", "Deepest first"],
+    ["topic", "Topic A–Z"],
     ["read", "Most comments read"],
     ["products", "Most products"],
   ];
   const DEPTH_RANK = { deep: 0, standard: 1, quick: 2 };
+  const DEPTH_LABEL = { deep: "Deep", standard: "Standard", quick: "Quick" };
+  const EFFORT_RANK = ["ultra", "max", "xhigh", "high", "medium", "low", "minimal"];
+
+  /* The writer a guide is filed under: its provider, or "counts" when no
+     model wrote it. Old guides may not say; they count as counts-only. */
+  const writerOf = (r) => (!r.by || r.by === "counts" ? "counts" : r.by);
+  // Same order as the launcher: Claude, Codex, Grok, anything else, counts last.
+  const writerRank = (r) => (writerOf(r) === "counts" ? WRITERS.length + 1 : WRITERS.includes(r.by) ? WRITERS.indexOf(r.by) : WRITERS.length);
+  const effortRank = (r) => (EFFORT_RANK.includes(r.effort) ? EFFORT_RANK.indexOf(r.effort) : EFFORT_RANK.length);
+  const depthRank = (r) => DEPTH_RANK[r.depth] ?? 3;
+  const writerGroup = (r) => `${writerOf(r)}|${writerOf(r) === "counts" ? "" : r.model || ""}`;
+
+  /* How a grouped sort labels its sections. The sort keeps each group's
+     guides together, so a new heading goes wherever the key changes. */
+  const LIST_GROUPS = {
+    writer: (r) => {
+      const by = writerOf(r);
+      if (by === "counts") return { id: writerGroup(r), label: "Counts only", detail: "no model" };
+      return { id: writerGroup(r), label: PROVIDER_LABEL[by] || by, detail: r.model || "model not recorded" };
+    },
+    depth: (r) => ({ id: r.depth || "", label: DEPTH_LABEL[r.depth] || "Depth not recorded" }),
+    topic: (r) => ({ id: r.topic?.label || "", label: r.topic?.label || "Research" }),
+  };
 
   function sortReports(list) {
     const byDate = (a, b) => (b.createdAt || "").localeCompare(a.createdAt || "");
+    // Within a writer, the model used most recently comes first.
+    const latest = new Map();
+    for (const r of list) {
+      const key = writerGroup(r);
+      if ((r.createdAt || "") > (latest.get(key) || "")) latest.set(key, r.createdAt);
+    }
     const sorts = {
       newest: byDate,
       oldest: (a, b) => -byDate(a, b),
       topic: (a, b) => (a.topic?.label || "").localeCompare(b.topic?.label || "") || byDate(a, b),
-      depth: (a, b) => (DEPTH_RANK[a.depth] ?? 3) - (DEPTH_RANK[b.depth] ?? 3) || byDate(a, b),
+      writer: (a, b) =>
+        writerRank(a) - writerRank(b) ||
+        writerOf(a).localeCompare(writerOf(b)) ||
+        (latest.get(writerGroup(b)) || "").localeCompare(latest.get(writerGroup(a)) || "") ||
+        writerGroup(a).localeCompare(writerGroup(b)) ||
+        depthRank(a) - depthRank(b) ||
+        effortRank(a) - effortRank(b) ||
+        byDate(a, b),
+      // A deep guide a model read beats a deep one built from counts.
+      depth: (a, b) =>
+        depthRank(a) - depthRank(b) ||
+        (writerOf(a) === "counts") - (writerOf(b) === "counts") ||
+        (b.stats?.commentsRead || 0) - (a.stats?.commentsRead || 0) ||
+        byDate(a, b),
       read: (a, b) => (b.stats?.commentsRead || 0) - (a.stats?.commentsRead || 0) || byDate(a, b),
       products: (a, b) => (b.products || 0) - (a.products || 0) || byDate(a, b),
     };
     return [...list].sort(sorts[ui.listSort] || byDate);
+  }
+
+  function groupReports(list) {
+    const key = LIST_GROUPS[ui.listSort];
+    if (!key) return [{ id: "", items: list }];
+    const groups = [];
+    for (const r of list) {
+      const g = key(r);
+      const last = groups[groups.length - 1];
+      if (last && last.id === g.id) last.items.push(r);
+      else groups.push({ ...g, items: [r] });
+    }
+    return groups;
+  }
+
+  function reportGroup(g) {
+    const list = `<ul class="rs-report-list">${g.items.map(reportItem).join("")}</ul>`;
+    if (!g.label) return list;
+    return `<section class="rs-list-group">
+      <h3 class="rs-list-group-title">${esc(g.label)}${g.detail ? ` <span class="rs-list-group-detail">${esc(g.detail)}</span>` : ""}
+        <span class="tab-count">${g.items.length}</span></h3>
+      ${list}
+    </section>`;
   }
 
   function renderReportList() {
@@ -739,7 +806,7 @@
       </div>
       ${
         shown.length
-          ? `<ul class="rs-report-list">${shown.map(reportItem).join("")}</ul>`
+          ? groupReports(shown).map(reportGroup).join("")
           : `<p class="rs-empty">Every guide is archived. <button class="btn btn-ghost btn-small" type="button" data-list="archived">Show archived</button></p>`
       }`;
   }
@@ -754,7 +821,9 @@
         }</span>
         <span class="rs-report-title">${esc(r.headline || "Untitled guide")}</span>
         <span class="rs-hint">${r.products} products · ${num(s.postsScanned)} posts scanned ·
-          ${num(s.commentsRead)} comments ${s.threadsFetched != null ? "read" : "fetched"} · ${esc(writtenBy(r.by, r.model))}</span>
+          ${num(s.commentsRead)} comments ${s.threadsFetched != null ? "read" : "fetched"} · ${esc(writtenBy(r.by, r.model, r.effort))}${
+            r.readers ? `; parts read by ${esc(Object.entries(r.readers).map(([who, n]) => `${who} ×${n}`).join(", "))}` : ""
+          }</span>
       </button>
       <div class="rs-item-actions">
         <button class="btn btn-ghost btn-small" type="button" data-archive="${esc(r.name)}" data-to="${r.archived ? "false" : "true"}"
@@ -895,7 +964,7 @@
     ui.reportName = name;
     ui.report = null;
     ui.reportError = "";
-    ui.filters = { q: "", tier: "", lean: "", plant: "", use: "", brand: "", solo: false, sort: "score", online: false };
+    ui.filters = { q: "", tier: "", lean: "", plant: "", use: "", brand: "", terp: "", solo: false, sort: "score", online: false };
     ui.brandQuery = "";
     root.innerHTML = `<div class="rs-loading"><span class="spinner" aria-hidden="true"></span> Loading guide…</div>`;
     try {
@@ -927,6 +996,13 @@
   const SOLO_RANK = { great: 0, good: 1, mixed: 2, unknown: 3, poor: 4 };
   const TIME_LABEL = { day: "Daytime", evening: "Evening", night: "Night", any: "Any time" };
   const NEW_DAYS = 90;
+
+  /* The terpene notes live in core.js, so the Collection, Shopping list and
+     Research all say the same thing about each one. */
+  const Core = window.CloudlineCore;
+  const TERPENES = Core.TERPENES;
+  const terpKey = Core.terpeneKey;
+  const terpName = Core.terpeneName;
 
   /* Indica / sativa / hybrid: OCS's label first ("Indica Dominant"), else what
      people reported. */
@@ -981,8 +1057,9 @@
       p._mention = mentionByBrand.get(brandKey(p.brand)) || null;
       p._plant = plantOf(p);
       p._new = isNew(p.ocs?.created, report);
+      p._terps = [...new Set((p.ocs?.terpenes || []).map(terpKey).filter(Boolean))];
       p._haystack = [p.brand, p.name, p.kind, p.flavour, p.effects, p.high, p.verdict, p.hardware, p.ocs?.genetics,
-        ...(p.ocs?.terpenes || []), ...(p.pros || []), ...(p.cons || []), ...(p.good_for || []).map((t) => GOOD_FOR[t])]
+        ...(p.ocs?.terpenes || []), ...p._terps.map(terpName), ...(p.pros || []), ...(p.cons || []), ...(p.good_for || []).map((t) => GOOD_FOR[t])]
         .join(" ")
         .toLowerCase();
     }
@@ -1012,6 +1089,7 @@
       ["trends", "Trends", (g.trends || []).length || (r.mentions?.months || []).length],
       ["brands", "Brands", (g.brands || []).length],
       ["rankings", "Rankings", (g.products || []).length],
+      ["terpenes", "Terpenes", terpeneCounts(g.products || []).length],
       ["chart", "Price vs score", (g.products || []).some((p) => p._ppg)],
       ["compare", "Compare", (g.products || []).length],
       ["avoid", "Skip these", (g.avoid || []).length],
@@ -1063,6 +1141,7 @@
         ${sectionTrends(r, g)}
         ${sectionBrands(r, g)}
         ${sectionRankings(g)}
+        ${sectionTerpenes(g)}
         ${sectionChart(g)}
         ${sectionCompare(g)}
         ${sectionAvoid(r, g)}
@@ -1081,7 +1160,40 @@
     drawScatter();
     drawVolume();
     refreshOwnership();
+    spySection();
   }
+
+  /* The section menu sticks under the app bar, so it is one tap away however
+     far down the guide you are. It marks the section being read and keeps
+     that button in view when the menu scrolls sideways on a phone. */
+  const appbar = document.getElementById("appbar");
+  if (appbar && "ResizeObserver" in window) {
+    new ResizeObserver(() => document.documentElement.style.setProperty("--appbar-h", `${appbar.offsetHeight}px`)).observe(appbar);
+  }
+  let spyFrame = 0;
+
+  function spySection() {
+    spyFrame = 0;
+    const toc = root.querySelector(".rs-toc");
+    if (!toc || toc.offsetParent === null) return;
+    const box = toc.getBoundingClientRect();
+    const buttons = [...toc.querySelectorAll("[data-jump]")];
+    let current = null;
+    for (const button of buttons) {
+      const target = document.getElementById(button.dataset.jump);
+      if (target && target.getBoundingClientRect().top <= box.bottom + 24) current = button;
+    }
+    toc.classList.toggle("is-stuck", box.top <= (appbar?.offsetHeight || 0) + 1 && window.scrollY > 0);
+    if (current?.getAttribute("aria-current")) return;
+    for (const button of buttons) button.removeAttribute("aria-current");
+    if (!current) return;
+    current.setAttribute("aria-current", "true");
+    toc.scrollTo({ left: current.offsetLeft - (toc.clientWidth - current.offsetWidth) / 2, behavior: "smooth" });
+  }
+
+  window.addEventListener("scroll", () => {
+    if (!spyFrame) spyFrame = window.requestAnimationFrame(spySection);
+  }, { passive: true });
 
   function section(id, title, note, body) {
     return `<section class="rs-section" id="rs-${id}" aria-labelledby="rs-${id}-h">
@@ -1393,6 +1505,7 @@
     const plants = [...new Set(products.map((p) => p._plant).filter(Boolean))];
     const uses = Object.keys(GOOD_FOR).filter((tag) => products.some((p) => (p.good_for || []).includes(tag)));
     const brands = [...new Set(products.map((p) => p.brand))].sort((a, b) => a.localeCompare(b));
+    const terps = terpeneCounts(products).map(([key]) => key);
     const hasSolo = products.some((p) => p.solo && ["great", "good"].includes(p.solo.fit));
     const option = (value, label, current) => `<option value="${esc(value)}" ${current === value ? "selected" : ""}>${esc(label)}</option>`;
     return section(
@@ -1424,6 +1537,13 @@
           brands.length > 1
             ? `<label class="select"><span class="sr-only">Brand</span><select id="rs-f-brand">
           <option value="">All brands</option>${brands.map((b) => option(b, b, f.brand)).join("")}
+        </select></label>`
+            : ""
+        }
+        ${
+          terps.length
+            ? `<label class="select"><span class="sr-only">Terpene</span><select id="rs-f-terp">
+          <option value="">Any terpene</option>${terps.map((k) => option(k, terpName(k), f.terp)).join("")}
         </select></label>`
             : ""
         }
@@ -1459,6 +1579,7 @@
         (!f.plant || p._plant === f.plant) &&
         (!f.use || (p.good_for || []).includes(f.use)) &&
         (!f.brand || p.brand === f.brand) &&
+        (!f.terp || p._terps.includes(f.terp)) &&
         (!f.solo || (p.solo && ["great", "good"].includes(p.solo.fit))) &&
         (!f.online || (p.ocs && p.ocs.online)) &&
         (!q || p._haystack.includes(q))
@@ -1515,7 +1636,6 @@
       ["Talked about", p._mention ? `${p._mention.mentions}× <span class="rs-hint">(brand)</span>` : "—"],
     ].filter(([, v]) => v !== "—");
     const details = [
-      ["Terpenes", o?.terpenes?.length ? esc(o.terpenes.join(", ")) : ""],
       ["Genetics", o?.genetics ? esc(o.genetics) : ""],
       ["Made by", o ? esc([o.subsub, o.process].filter(Boolean).join(" · ")) : ""],
       ["Producer", o?.producer ? esc(`${o.producer}${o.province ? `, ${o.province}` : ""}`) : ""],
@@ -1535,6 +1655,7 @@
       </div>
       <dl class="rs-facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>
       ${uses ? `<div class="rs-uses"><span class="rs-hint">Good for</span>${uses}</div>` : ""}
+      ${p._terps.length ? `<div class="rs-uses"><span class="rs-hint">Terpenes</span>${p._terps.map((k) => terpChip(k)).join("")}</div>` : ""}
       <p class="rs-verdict">${esc(p.verdict)}</p>
       ${
         p.high || p.flavour || p.effects || p.hardware || p.value
@@ -1566,7 +1687,7 @@
         </button>
         <span class="rs-owned" data-owned="${esc(p.id)}"></span>
         ${o ? `<a class="btn btn-ghost btn-small" href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">OCS <svg class="icon" aria-hidden="true"><use href="#i-external" /></svg></a>` : ""}
-        <a class="btn btn-ghost btn-small" href="https://hibuddy.ca/search?q=${search}" target="_blank" rel="noopener noreferrer">Store prices <svg class="icon" aria-hidden="true"><use href="#i-external" /></svg></a>
+        <a class="btn btn-ghost btn-small" href="/api/hibuddy?${esc(new URLSearchParams({ name: String(p.name).split(/[(/—]/)[0].trim(), brand: p.brand || "" }))}" target="_blank" rel="noopener noreferrer">Store prices <svg class="icon" aria-hidden="true"><use href="#i-external" /></svg></a>
         <a class="btn btn-ghost btn-small" href="https://www.reddit.com/r/TheOCS/search/?q=${search}&restrict_sr=1&sort=new" target="_blank" rel="noopener noreferrer">Latest posts <svg class="icon" aria-hidden="true"><use href="#i-external" /></svg></a>
       </div>
     </article>`;
@@ -1759,6 +1880,109 @@
     );
   }
 
+  /* [[key, how many products have it]], most common first. */
+  function terpeneCounts(products) {
+    const counts = new Map();
+    for (const p of products) for (const key of p._terps || []) counts.set(key, (counts.get(key) || 0) + 1);
+    return [...counts].sort((a, b) => b[1] - a[1] || terpName(a[0]).localeCompare(terpName(b[0])));
+  }
+
+  function terpChip(key) {
+    const on = ui.filters.terp === key;
+    return `<button type="button" class="rs-use rs-terp-chip${on ? " is-on" : ""}" data-terp-card="${esc(key)}" aria-haspopup="dialog" aria-expanded="false">${esc(terpName(key))}</button>`;
+  }
+
+  /* Tapping a terpene on a card opens the shared terpene card with what this
+     guide knows about it, and ways to follow it into Rankings. */
+  function openTerpCard(anchor, key) {
+    const products = ui.report.guide.products || [];
+    const withIt = products.filter((p) => p._terps.includes(key)).sort((a, b) => TIER_ORDER[a.tier] - TIER_ORDER[b.tier] || b.score - a.score);
+    const best = withIt[0];
+    const on = ui.filters.terp === key;
+    const actions = [
+      on
+        ? { label: "Show every product", run: () => filterTerpene(key, true) }
+        : { label: `Show the ${num(withIt.length)} with it`, run: () => filterTerpene(key, false) },
+      ...($("#rs-terpenes") ? [{ label: "Compare terpenes", run: () => { pickTerpene(key); jumpTo("rs-terpenes"); } }] : []),
+    ];
+    window.Cloudline?.showTerpene(anchor, key, {
+      stats: [
+        `In ${num(withIt.length)} of the ${num(products.length)} ranked products in this guide.`,
+        best ? `Best rated with it here: ${best.brand} · ${best.name} (${Number(best.score).toFixed(1)}).` : "",
+      ],
+      actions,
+    });
+  }
+
+  function sectionTerpenes(g) {
+    const products = g.products || [];
+    const counts = terpeneCounts(products);
+    if (!counts.length) return "";
+    if (!counts.some(([key]) => key === ui.terp)) ui.terp = counts[0][0];
+    const top = counts[0][1];
+    const listed = products.filter((p) => p._terps.length).length;
+    return section(
+      "terpenes",
+      "Terpenes",
+      `What OCS lists for the ${num(listed)} ranked products that have terpenes on file. Pick one to see what it smells like and which products carry it.
+      The "linked with" notes are what people commonly say, not settled science; the whole plant matters more than any one terpene.`,
+      `<div class="rs-terp-grid" role="group" aria-label="Terpenes">
+        ${counts
+          .map(
+            ([key, n]) => `<button type="button" class="rs-terp" data-terp-pick="${esc(key)}" aria-pressed="${key === ui.terp}">
+              <b>${esc(terpName(key))}</b>
+              <small>${esc(TERPENES[key]?.aroma || "")}</small>
+              <span class="rs-terp-bar" aria-hidden="true"><span style="width:${Math.max(6, Math.round((n / top) * 100))}%"></span></span>
+              <small class="rs-terp-n">in ${num(n)} of ${num(products.length)}</small>
+            </button>`
+          )
+          .join("")}
+      </div>
+      <div class="rs-terp-detail" id="rs-terp-detail" aria-live="polite">${terpDetail(ui.terp)}</div>`
+    );
+  }
+
+  function terpDetail(key) {
+    const t = TERPENES[key] || {};
+    const withIt = (ui.report.guide.products || [])
+      .filter((p) => p._terps.includes(key))
+      .sort((a, b) => TIER_ORDER[a.tier] - TIER_ORDER[b.tier] || b.score - a.score);
+    const facts = [
+      ["Smells like", t.aroma],
+      [t.flavour ? "Note" : "Linked with", t.flavour ? "A flavour compound, not a terpene; often added for taste." : t.linked],
+      ["Also found in", t.also],
+    ].filter(([, v]) => v);
+    return `<h3>${esc(terpName(key))}</h3>
+      ${(t.effects || []).length ? `<div class="rs-uses"><span class="rs-hint">Main effects</span>${t.effects.map((e) => `<span class="terp-effect">${esc(e)}</span>`).join("")}</div>` : ""}
+      ${facts.length ? `<dl class="rs-fe">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>` : `<p class="rs-hint">No notes on this one yet.</p>`}
+      <p class="rs-hint">Best rated with ${esc(terpName(key))}:</p>
+      <ol class="rs-terp-top">${withIt
+        .slice(0, 5)
+        .map(
+          (p) => `<li><button type="button" class="rs-link" data-jump="rs-p-${esc(p.id)}">${tierBadge(p.tier)} ${esc(p.brand)} · ${esc(p.name)}</button>
+            <span class="rs-hint">${Number(p.score).toFixed(1)}</span></li>`
+        )
+        .join("")}</ol>
+      <button class="btn btn-secondary btn-small" type="button" data-terp="${esc(key)}" data-terp-all>Show all ${num(withIt.length)} in Rankings</button>`;
+  }
+
+  function pickTerpene(key) {
+    ui.terp = key;
+    for (const b of root.querySelectorAll("[data-terp-pick]")) b.setAttribute("aria-pressed", String(b.dataset.terpPick === key));
+    const box = $("#rs-terp-detail");
+    if (box) box.innerHTML = terpDetail(key);
+  }
+
+  /* A terpene chip on a card toggles the Rankings filter; "Show all" sets it. */
+  function filterTerpene(key, toggle) {
+    const off = toggle && ui.filters.terp === key;
+    ui.filters = { ...ui.filters, terp: off ? "" : key };
+    if (!off) pickTerpene(key);
+    syncFilterInputs();
+    drawCards();
+    jumpTo("rs-rankings");
+  }
+
   function sectionGlossary(g) {
     const terms = g.glossary || [];
     if (!terms.length) return "";
@@ -1839,7 +2063,7 @@
     if (!target) return;
     if (target.classList.contains("rs-card") && target.closest("#rs-cards") === null) return;
     if (!target.isConnected || target.offsetParent === null) {
-      ui.filters = { ...ui.filters, q: "", tier: "", lean: "", plant: "", use: "", brand: "", solo: false, online: false };
+      ui.filters = { ...ui.filters, q: "", tier: "", lean: "", plant: "", use: "", brand: "", terp: "", solo: false, online: false };
       drawCards();
     }
     const el = document.getElementById(id);
@@ -1860,7 +2084,7 @@
     if (t.dataset.open) return go(t.dataset.open);
     if (t.dataset.jump) {
       if (!document.getElementById(t.dataset.jump)) {
-        ui.filters = { ...ui.filters, q: "", tier: "", lean: "", plant: "", use: "", brand: "", solo: false, online: false };
+        ui.filters = { ...ui.filters, q: "", tier: "", lean: "", plant: "", use: "", brand: "", terp: "", solo: false, online: false };
         drawCards();
       }
       return jumpTo(t.dataset.jump);
@@ -1886,6 +2110,9 @@
     if (t.dataset.delete) return deleteReport(t.dataset.delete);
     if (t.dataset.archive) return setArchived(t.dataset.archive, t.dataset.to === "true");
     if (t.dataset.brandFilter) return showBrand(t.dataset.brandFilter);
+    if (t.dataset.terpPick) return pickTerpene(t.dataset.terpPick);
+    if (t.dataset.terpCard) return openTerpCard(t, t.dataset.terpCard);
+    if (t.dataset.terp) return filterTerpene(t.dataset.terp, !("terpAll" in t.dataset));
     if (t.dataset.resume) return resumeRun(t.dataset.resume, t.dataset.providerTo, t.dataset.modelTo, t.dataset.effortTo);
     if (t.dataset.discard) return discardRun(t.dataset.discard);
     if (t.dataset.list) {
@@ -1915,7 +2142,7 @@
         return startRun({ topic: topic.key, query: topic.query || "", depth: ui.depth });
       }
       case "clear-filters":
-        ui.filters = { ...ui.filters, q: "", tier: "", lean: "", plant: "", use: "", brand: "", solo: false, online: false };
+        ui.filters = { ...ui.filters, q: "", tier: "", lean: "", plant: "", use: "", brand: "", terp: "", solo: false, online: false };
         drawCards();
         syncFilterInputs();
         return undefined;
@@ -1934,6 +2161,7 @@
     if ($("#rs-f-plant")) $("#rs-f-plant").value = f.plant;
     if ($("#rs-f-use")) $("#rs-f-use").value = f.use;
     if ($("#rs-f-brand")) $("#rs-f-brand").value = f.brand;
+    if ($("#rs-f-terp")) $("#rs-f-terp").value = f.terp;
     if ($("#rs-f-solo")) $("#rs-f-solo").checked = f.solo;
   }
 
@@ -1941,7 +2169,7 @@
      that brand (or search for it if the guide ranked none of its products). */
   function showBrand(name) {
     const ranked = (ui.report.guide.products || []).some((p) => p.brand === name);
-    ui.filters = { ...ui.filters, q: ranked ? "" : name, tier: "", lean: "", plant: "", use: "", solo: false, online: false,
+    ui.filters = { ...ui.filters, q: ranked ? "" : name, tier: "", lean: "", plant: "", use: "", terp: "", solo: false, online: false,
       brand: ranked ? name : "" };
     syncFilterInputs();
     drawCards();
@@ -2037,7 +2265,7 @@
       return drawBrands();
     }
     const filters = { "rs-q": "q", "rs-f-tier": "tier", "rs-f-lean": "lean", "rs-sort": "sort", "rs-f-online": "online",
-      "rs-f-plant": "plant", "rs-f-use": "use", "rs-f-brand": "brand", "rs-f-solo": "solo" };
+      "rs-f-plant": "plant", "rs-f-use": "use", "rs-f-brand": "brand", "rs-f-terp": "terp", "rs-f-solo": "solo" };
     if (filters[t.id]) {
       ui.filters[filters[t.id]] = t.type === "checkbox" ? t.checked : t.value;
       drawCards();

@@ -586,6 +586,26 @@ class EstimateTest(unittest.TestCase):
             self.assertIsNone(research.typical_timing(out, research.timing_key("claude", "", ""), "part"))
 
 
+class ReportListTest(unittest.TestCase):
+    def test_rows_say_who_wrote_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "reports"
+            folder.mkdir()
+            written = {"by": "grok", "model": "grok-5", "effort": "high",
+                       "readers": {"Grok (grok-5)": 3, "Claude (claude-opus-5-5)": 2}}
+            docs = {"hash-20260101T000000Z.json": written,
+                    "hash-20260102T000000Z.json": {"by": "counts", "model": None, "effort": "xhigh"}}
+            for name, writer in docs.items():
+                (folder / name).write_text(json.dumps({"guide": {}, "writer": writer}))
+            rows = {r["name"]: r for r in research.list_reports(Path(tmp))}
+        grok = rows["hash-20260101T000000Z.json"]
+        self.assertEqual((grok["by"], grok["model"], grok["effort"]), ("grok", "grok-5", "high"))
+        self.assertEqual(grok["readers"], written["readers"])
+        counts = rows["hash-20260102T000000Z.json"]
+        # A counts-only guide didn't think at any level, whatever was picked.
+        self.assertEqual((counts["by"], counts["effort"], counts["readers"]), ("counts", None, None))
+
+
 class ServerResearchTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()

@@ -78,6 +78,20 @@ dependencies.
   fit. Brand cards show OCS counts and prices, trend, tone and best pick.
   "What's changing" adds counted risers and fallers and what's new on OCS.
   Privacy mode hides everything to do with solo sessions
+- The section menu (Quick picks … Method) stays pinned under the app bar as
+  you scroll and marks the section you're in
+- A Terpenes section lists every terpene OCS gives for the ranked products
+  (spellings like Beta-Myrcene folded together): what each smells like, what
+  people link it with, where else it's found, and the best-rated products
+  carrying it. A terpene filter in Rankings narrows the list to products
+  with it
+- Tap any terpene (a Rankings card, an entry's details, a shopping-list item)
+  for its card: main effects, what it smells like, what people say about it,
+  where else it's found, and how products with it rated in your own
+  collection. In Research it also says how many ranked products carry it and
+  the best-rated one, with buttons to filter Rankings to it or compare it in
+  the Terpenes section. It opens beside the chip on a wide screen and as a
+  bottom sheet on a phone
 - If the writer hits its plan's usage limit, the run **pauses** instead of
   failing: everything gathered and every part already read is saved, and
   the tab offers **Continue** (same writer, once the limit resets — the
@@ -92,8 +106,12 @@ dependencies.
   this run's own pace once parts finish, before that from past runs with the
   same writer, model and thinking level (`research/cache/timing.json`)
 - Guides are saved and can be reopened, re-run, archived or deleted; the
-  list sorts by date, topic, depth, comments read or product count, with
-  separate Active and Archived views
+  list sorts by date, who wrote it, depth, topic, comments read or product
+  count, with separate Active and Archived views. "Who wrote it" groups
+  guides under Claude, Codex, Grok and counts-only, one heading per model
+  (the one used most recently first), deepest and highest thinking level
+  first inside each; "Deepest first" and "Topic" get headings too, and a
+  deep guide a model read ranks above a deep one built from counts
 
 **Everywhere**
 
@@ -167,6 +185,20 @@ in the notes as a store estimate.
 Edibles are dosed in milligrams, so their percentage tags are a flat zero —
 those are left blank rather than recorded as "0% THC".
 
+## How the hibuddy price links work
+
+Every collection row, shopping-list item, detail panel and research card has
+a price-tag link to the product's own page on [hibuddy.ca](https://hibuddy.ca),
+which compares store prices. hibuddy addresses products by an opaque id
+(`/product/ef5b560e…`), so the link can't be built from the name. Instead it
+points at `/api/hibuddy?name=&brand=&type=`, and only when it is opened does
+`hibuddy.py` ask hibuddy's own search box endpoint
+(`/api/search-suggest?q=<brand> <name>`) and pick the suggestion that is this
+product: same brand, every distinctive word of the name, the right category,
+and a cart kept apart from the same strain's all-in-one pen. The server then
+redirects there, or to a hibuddy search (`/products/search?q=`) when nothing fits. Answers are cached
+in memory for a day.
+
 ## How research works
 
 `research.py` does the work; `serve.py` runs it in a background thread (one at
@@ -238,7 +270,8 @@ test starts its own server on a free port.
 | `research.js` | The Research tab: launcher, progress, guide page, charts |
 | `fonts/` | Bricolage Grotesque (headings), self-hosted, SIL OFL |
 | `ocs.py` | Turns an ocs.ca link into fields |
+| `hibuddy.py` | Finds a product's hibuddy.ca page for the price links |
 | `research.py` | Reddit + OCS research runs and the guide writer |
 | `llm.py` | Claude / Codex / Grok CLI calls with a JSON schema, and their model lists |
-| `serve.py` | Static files, `/api/state`, `/api/snapshots`, `/api/lookup`, `/api/research…` |
+| `serve.py` | Static files, `/api/state`, `/api/snapshots`, `/api/lookup`, `/api/hibuddy`, `/api/research…` |
 | `tests/` | Server, core and browser tests |

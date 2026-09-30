@@ -1056,6 +1056,89 @@
     return entry.favorite || entry.wouldRepurchase === true || (typeof entry.rating === "number" && entry.rating >= 8);
   }
 
+  /* What each terpene smells like, the effects people most often link it
+     with, and where else it turns up. The effects are folk wisdom more than
+     science, and every place that shows them says so. Two OCS entries are
+     flavour compounds, not terpenes, and are labelled that way. */
+  const TERPENES = {
+    myrcene: { name: "Myrcene", aroma: "Earthy, musky, ripe mango, hops", effects: ["Relaxing", "Heavy body", "Sleepy"], linked: "Heavy, relaxed, couch-lock body feel; the terpene most often blamed for \"indica\" sleepiness", also: "Mango, hops, lemongrass, thyme" },
+    limonene: { name: "Limonene", aroma: "Citrus peel, lemon, orange", effects: ["Mood lift", "Upbeat", "Stress relief"], linked: "Bright, upbeat, happy mood; can feel racy for some in large amounts", also: "Lemon and orange rind, juniper" },
+    caryophyllene: { name: "Caryophyllene", aroma: "Black pepper, spice, wood", effects: ["Calm", "Body relief", "Grounded"], linked: "Calm, body relief, takes the edge off; the one common terpene that acts on CB2 receptors", also: "Black pepper, cloves, cinnamon" },
+    humulene: { name: "Humulene", aroma: "Woody, earthy, dry hops", effects: ["Clear-headed", "Less munchies", "Mild body"], linked: "A drier, clearer high; said to dull the munchies", also: "Hops, sage, ginseng" },
+    linalool: { name: "Linalool", aroma: "Floral, lavender, a little spice", effects: ["Calming", "Sleepy", "Anxiety relief"], linked: "Calming, sleepy, anxiety-softening; a common pick for night", also: "Lavender, coriander, birch" },
+    pinene: { name: "Pinene", aroma: "Pine needles, fresh and sharp", effects: ["Alert", "Focused", "Clear-headed"], linked: "Alert and clear-headed; said to soften memory fog and short-term forgetfulness", also: "Pine, rosemary, basil, dill" },
+    terpinolene: { name: "Terpinolene", aroma: "Fresh, fruity, floral and herbal at once", effects: ["Energetic", "Uplifting", "Creative"], linked: "Uplifting, energetic, heady, \"sativa-like\"; common in Jack Herer and haze strains", also: "Apples, lilac, tea tree, cumin" },
+    ocimene: { name: "Ocimene", aroma: "Sweet, herbal, woody", effects: ["Uplifting", "Energetic"], linked: "Uplifting and light", also: "Mint, parsley, basil, orchids" },
+    farnesene: { name: "Farnesene", aroma: "Green apple, woody, soft floral", effects: ["Calm", "Gentle"], linked: "Calm, gentle, soothing", also: "Green apple peel, turmeric, gardenia" },
+    bisabolol: { name: "Bisabolol", aroma: "Soft floral, honey, chamomile", effects: ["Soothing", "Gentle"], linked: "Gentle, soothing", also: "Chamomile" },
+    valencene: { name: "Valencene", aroma: "Sweet orange, fresh citrus", effects: ["Uplifting", "Mood lift"], linked: "Uplifting, cheerful", also: "Valencia oranges, grapefruit" },
+    terpineol: { name: "Terpineol", aroma: "Lilac, pine, floral", effects: ["Relaxing", "Sleepy"], linked: "Relaxing, a little sedating", also: "Lilac, pine, lime blossom" },
+    terpinene: { name: "Terpinene", aroma: "Woody, citrus, a little medicinal", effects: ["Uplifting"], linked: "Light and uplifting; usually a minor terpene", also: "Tea tree, cardamom, marjoram" },
+    guaiol: { name: "Guaiol", aroma: "Pine, rose, wood", effects: ["Grounding", "Relaxing"], linked: "Grounding, relaxing", also: "Guaiacum wood, cypress" },
+    nerolidol: { name: "Nerolidol", aroma: "Woody, floral, fresh bark", effects: ["Sedating", "Relaxing"], linked: "Sedating, relaxing", also: "Jasmine, ginger, tea tree" },
+    bergamotene: { name: "Bergamotene", aroma: "Woody, citrus, Earl Grey tea", effects: ["Relaxing"], linked: "Relaxing", also: "Bergamot, lime, carrot" },
+    phellandrene: { name: "Phellandrene", aroma: "Peppery mint, citrus", effects: ["Uplifting", "Energetic"], linked: "Uplifting, energetic", also: "Dill, eucalyptus, black pepper" },
+    cedrene: { name: "Cedrene", aroma: "Cedar wood", effects: ["Calming"], linked: "Calming", also: "Cedarwood" },
+    fenchol: { name: "Fenchol", aroma: "Fresh, camphor, lemon-pine", effects: ["Alert", "Clear-headed"], linked: "Fresh and clear; a minor terpene in many strains", also: "Basil, fennel" },
+    borneol: { name: "Borneol", aroma: "Camphor, earthy mint", effects: ["Calming", "Soothing"], linked: "Calming, soothing", also: "Camphor, rosemary, mint" },
+    eucalyptol: { name: "Eucalyptol", aroma: "Cool, minty, eucalyptus", effects: ["Clear-headed", "Alert"], linked: "Cool and clear-headed", also: "Eucalyptus, bay leaf, sage" },
+    camphene: { name: "Camphene", aroma: "Damp woods, fir needles, earthy", effects: ["Calm"], linked: "Mild and calm", also: "Fir, nutmeg, ginger" },
+    geraniol: { name: "Geraniol", aroma: "Rose, sweet floral, a little citrus", effects: ["Relaxing", "Mood lift"], linked: "Soft, relaxed, pleasant mood", also: "Roses, geraniums, lemongrass" },
+    carene: { name: "Carene", aroma: "Sweet, piney, cedar", effects: ["Alert", "Dry mouth"], linked: "Alert; often blamed for dry mouth and red eyes", also: "Cedar, rosemary, bell pepper" },
+    sabinene: { name: "Sabinene", aroma: "Spicy, woody, citrus", effects: ["Uplifting"], linked: "Light and uplifting", also: "Black pepper, nutmeg, carrot seed" },
+    "caryophyllene oxide": { name: "Caryophyllene oxide", aroma: "Woody, dry, peppery", effects: ["Calm", "Body relief"], linked: "What caryophyllene becomes as flower ages; a milder, calm body feel", also: "Lemon balm, basil, cloves" },
+    nonalactone: { name: "Gamma-nonalactone", aroma: "Coconut, peach", flavour: true, effects: [], also: "Coconut, peaches; a common food flavouring" },
+    "isoamyl acetate": { name: "Isoamyl acetate", aroma: "Banana, pear candy", flavour: true, effects: [], also: "Bananas; a common food flavouring" },
+  };
+  // Spellings that do not reduce to a key by dropping the prefix. OCS's
+  // "alpha-caryophyllene" is humulene; "BCP" is beta-caryophyllene.
+  const TERPENE_ALIAS = {
+    "alpha-caryophyllene": "humulene",
+    "alpha caryophyllene": "humulene",
+    "a-caryophyllene": "humulene",
+    "α-caryophyllene": "humulene",
+    bcp: "caryophyllene",
+    "1,8-cineole": "eucalyptol",
+    cineole: "eucalyptol",
+    "3-carene": "carene",
+    "fenchyl alcohol": "fenchol",
+  };
+
+  /* "Beta-Myrcene", "β-myrcene", "Myrcene 0.8%" → "myrcene". Null for blanks
+     and for OCS's "Terpenes removed". Unknown terpenes keep their own name. */
+  function terpeneKey(raw) {
+    const text = String(raw || "")
+      .toLowerCase()
+      .replace(/\([^)]*\)/g, " ")
+      .replace(/[\d.]+\s*(%|mg\/g|mg)/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/[:\s-]+$/, "");
+    if (!text || text.includes("removed")) return null;
+    if (TERPENE_ALIAS[text]) return TERPENE_ALIAS[text];
+    const bare = text.replace(/^(?:(?:alpha|beta|gamma|delta|trans|cis)[\s-]+|[abgdlαβγδ]-)+/, "").replace(/^(?:\d+-)/, "");
+    return TERPENE_ALIAS[bare] || bare || null;
+  }
+
+  function terpeneName(key) {
+    return TERPENES[key]?.name || String(key || "").replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  /* Everything the terpene card shows, for any spelling. Unknown terpenes come
+     back with just a name, so the card can say it has no notes. */
+  function terpeneInfo(raw) {
+    const key = terpeneKey(raw);
+    if (!key) return null;
+    const known = TERPENES[key];
+    return { key, known: Boolean(known), ...(known || { effects: [] }), name: terpeneName(key) };
+  }
+
+  /* "Limonene, Myrcene 0.4%; Pinene" or ["Limonene", …] → unique keys, in order. */
+  function terpeneKeys(value) {
+    const list = Array.isArray(value) ? value : String(value || "").split(/[,;·]/);
+    return [...new Set(list.map(terpeneKey).filter(Boolean))];
+  }
+
   function terpeneSet(value) {
     const list = Array.isArray(value) ? value : String(value || "").split(/[,;·]/);
     return new Set(list.map((item) => tagKey(item)).filter((item) => item && item.length > 2));
@@ -1165,6 +1248,11 @@
     averageThcPercent,
     isLiked,
     matchScore,
+    TERPENES,
+    terpeneKey,
+    terpeneKeys,
+    terpeneName,
+    terpeneInfo,
     awaitingRating,
   };
 });
