@@ -5912,3 +5912,46 @@ p.rs-solo {
   text-align: left;
   white-space: normal;
 }
+
+/* ── Research: full run log ── */
+
+.rs-full-log {
+  margin-top: var(--s-3);
+  font-size: 0.85rem;
+}
+
+.rs-full-log summary {
+  cursor: pointer;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+.rs-log-warn {
+  color: var(--danger);
+}
+
+.rs-full-log .rs-log-group {
+  margin-top: var(--s-2);
+}
+
+.rs-full-log h3 {
+  font-size: 0.85rem;
+}
+
+.rs-full-log ol {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  margin-top: var(--s-1);
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.rs-full-log li.is-warn {
+  padding: 2px var(--s-2);
+  border-left: 3px solid var(--danger);
+  background: var(--danger-wash);
+}

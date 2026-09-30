@@ -73,6 +73,7 @@ const ui = {
   resizeTimer: null,
   lightReading: true,
   autoContinue: true,
+  logOpen: false,
   lastJobId: null,
   listView: "active",
   listSort: "newest",

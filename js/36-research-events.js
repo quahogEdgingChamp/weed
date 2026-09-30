@@ -291,6 +291,10 @@ if (researchRoot) {
   researchRoot.addEventListener("focusin", showTip);
   researchRoot.addEventListener("pointerout", hideTip);
   researchRoot.addEventListener("focusout", hideTip);
+  /* "toggle" doesn't bubble; capture it so the full log stays as the user left it. */
+  researchRoot.addEventListener("toggle", (event) => {
+    if (event.target.matches?.(".rs-full-log")) ui.logOpen = event.target.open;
+  }, true);
   window.addEventListener("resize", () => {
     window.clearTimeout(ui.resizeTimer);
     ui.resizeTimer = window.setTimeout(() => {

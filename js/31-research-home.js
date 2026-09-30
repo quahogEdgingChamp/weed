@@ -371,6 +371,7 @@ function renderJob() {
           : ""
       }
       <ul class="rs-log" aria-live="polite">${log.map((line) => `<li>${esc(line.message)}</li>`).join("")}</ul>
+      ${fullLog(job)}
       ${
         job.status === "paused" && job.continuesAt
           ? `<p class="rs-paused-note">${esc(job.error || "Paused.")} Everything read so far is saved, and it
@@ -387,6 +388,41 @@ function renderJob() {
             : ""
       }
     </section>`;
+}
+
+/* Everything the run has said so far, grouped by step, with repeated
+   progress folded and problems marked (Core.foldLog). Stays open across
+   the redraws while it runs. */
+function fullLog(job) {
+  const groups = Core.foldLog(job.log || []);
+  if (!groups.length) return "";
+  const warnings = groups.reduce((n, g) => n + g.warnings, 0);
+  const lines = groups.reduce((n, g) => n + g.items.length, 0);
+  const time = (iso) => {
+    const at = new Date(iso || "");
+    return Number.isNaN(at.getTime()) ? "" : at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  };
+  return `<details class="rs-full-log" ${ui.logOpen ? "open" : ""}>
+    <summary>Full log · ${lines} ${lines === 1 ? "line" : "lines"}${
+      warnings ? ` · <span class="rs-log-warn">${warnings} ${warnings === 1 ? "problem" : "problems"}</span>` : ""
+    }</summary>
+    ${groups
+      .map(
+        (g) => `<section class="rs-log-group">
+          <h3>${esc(STAGE_LABELS[g.stage] || (g.stage === "paused" ? "Paused" : g.stage === "error" ? "Error" : g.stage || "Run"))}
+            <span class="rs-hint">${esc(time(g.from))}</span></h3>
+          <ol>${g.items
+            .map(
+              (item) => `<li class="${item.warning ? "is-warn" : ""}"><span class="rs-hint">${esc(time(item.at))}</span>
+                ${item.warning ? `<strong>Problem:</strong> ` : ""}${esc(item.message)}${
+                  item.count > 1 ? ` <span class="rs-hint">(×${item.count})</span>` : ""
+                }</li>`
+            )
+            .join("")}</ol>
+        </section>`
+      )
+      .join("")}
+  </details>`;
 }
 
 /* Continue with the writer the run used, or with whatever is picked in the

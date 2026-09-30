@@ -188,3 +188,19 @@ test("terpene spellings reduce to one key, with notes for the card", () => {
   const unknown = Core.terpeneInfo("Xyzene");
   assert.deepEqual([unknown.known, unknown.name, unknown.effects], [false, "Xyzene", []]);
 });
+
+test("a run log folds repeated progress and marks problems", () => {
+  const lines = [
+    { stage: "threads", message: "Fetched 5 of 30 threads", at: "t1" },
+    { stage: "threads", message: "Fetched 10 of 30 threads", at: "t2" },
+    { stage: "threads", message: "Fetched 30 of 30 threads", at: "t3" },
+    { stage: "threads", message: "Search for “Tribal” in r/TheOCS timed out for part of the year; skipped", at: "t4" },
+    { stage: "write", message: "Codex is reading 12 parts", at: "t5" },
+    { stage: "write", message: "Part 4 failed and is left out: bad JSON", at: "t6" },
+  ];
+  const groups = Core.foldLog(lines);
+  assert.deepEqual(groups.map((g) => [g.stage, g.items.length, g.warnings]), [["threads", 2, 1], ["write", 2, 1]]);
+  assert.deepEqual([groups[0].items[0].message, groups[0].items[0].count], ["Fetched 30 of 30 threads", 3]);
+  assert.equal(groups[0].items[1].warning, true);
+  assert.equal(groups[1].items[0].warning, false);
+});

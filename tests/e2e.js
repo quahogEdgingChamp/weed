@@ -480,6 +480,22 @@ function plantResearchQueue() {
     check(JSON.parse(fs.readFileSync(path.join(WORK, "research", "queue.json"), "utf8")).queue.length === 1,
       "the change is saved for restarts");
     check(await noHorizontalScroll(rs), "no sideways scrolling");
+    /* The panel of a running job, drawn from a made-up job: the page's
+       scripts share one scope, so the test can hand it one. */
+    await rs.evaluate(() => {
+      const at = new Date().toISOString();
+      ui.overview.job = { id: "fake", status: "running", label: "Hash", depth: "deep", llm: true, provider: "claude",
+        stage: "threads", stages: ["catalog", "reddit", "threads", "parse", "write"], startedAt: at, counts: {},
+        log: [5, 10, 15, 20].map((n) => ({ stage: "threads", at, message: `Fetched ${n} of 20 threads` }))
+          .concat([{ stage: "threads", at, message: "Search for “Tribal” in r/TheOCS timed out for part of the year; skipped" }]) };
+      renderJob();
+    });
+    await rs.click(".rs-full-log summary");
+    check(/2 lines · 1 problem/.test(await rs.textContent(".rs-full-log summary")), "the full log folds progress and counts problems");
+    check(await rs.isVisible(".rs-full-log li.is-warn >> text=timed out"), "and marks the problem");
+    await rs.evaluate(() => renderJob());
+    check(await rs.isVisible(".rs-full-log li.is-warn"), "it stays open while the panel redraws");
+    await rs.evaluate(() => { ui.overview.job = null; renderJob(); });
     check(rs.errors.length === 0, `research no script errors (${rs.errors.join(" | ")})`);
     await rs.context().close();
     const phone = await newPage(browser, `${url}?view=research`, { width: 390, height: 844 });

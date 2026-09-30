@@ -1200,6 +1200,39 @@
     );
   }
 
+  /* ── Research run log ─────────────────────────────────────────────────
+
+     A run's log, made readable: lines grouped by step, a run of progress
+     lines that differ only in their numbers ("Fetched 5 of 30 threads", …)
+     folded into its last line with a count, and problems marked. */
+
+  const LOG_WARNING = /\b(fail(ed|s)?|error|timed? ?out|didn'?t answer|isn'?t answering|unavailable|skipped|left out|couldn'?t|limit|refused|gave up|trying once more|asking once more)\b/i;
+
+  function foldLog(lines) {
+    const groups = [];
+    for (const line of lines || []) {
+      const message = String(line.message || "");
+      const stage = line.stage || "";
+      let group = groups[groups.length - 1];
+      if (!group || group.stage !== stage) {
+        group = { stage, from: line.at || "", items: [], warnings: 0 };
+        groups.push(group);
+      }
+      const shape = message.replace(/\d+(\.\d+)?/g, "#");
+      const last = group.items[group.items.length - 1];
+      const warning = LOG_WARNING.test(message);
+      if (last && !warning && !last.warning && last.shape === shape && /#/.test(shape)) {
+        last.message = message;
+        last.at = line.at || last.at;
+        last.count += 1;
+        continue;
+      }
+      group.items.push({ message, at: line.at || "", shape, count: 1, warning });
+      if (warning) group.warnings += 1;
+    }
+    return groups;
+  }
+
   return {
     SCHEMA_VERSION,
     TYPE_LABELS,
@@ -1254,5 +1287,6 @@
     terpeneName,
     terpeneInfo,
     awaitingRating,
+    foldLog,
   };
 });

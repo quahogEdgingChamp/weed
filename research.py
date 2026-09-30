@@ -2200,7 +2200,7 @@ class Jobs:
         with self.lock:
             if self.job is None:
                 return None
-            snapshot = {**self.job, "log": list(self.job["log"][-80:]), "counts": dict(self.job["counts"])}
+            snapshot = {**self.job, "log": list(self.job["log"][-200:]), "counts": dict(self.job["counts"])}
             snapshot["estimate"] = estimate_seconds(self.job, time.time()) if self.job["status"] == "running" else None
             snapshot.pop("partSeconds", None)
             snapshot.pop("stageStarted", None)
