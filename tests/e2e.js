@@ -592,9 +592,9 @@ function plantResearchQueue() {
     await qa.click("#rs-launch [data-mode=question]");
     await qa.waitForSelector("#rs-question");
     check(await qa.isHidden(".rs-topics"), "question mode hides the product topics");
-    check(await qa.isDisabled("[data-provider=none]"), "counts only is off for questions");
-    await qa.click("#rs-start");
-    check(await qa.isVisible("text=Type your question first"), "an empty question is caught on the page");
+    check(!(await qa.$("#rs-counts")), "counts only is off for questions");
+    check(await qa.isDisabled("#rs-start"), "Start waits for a question");
+    check(await qa.isVisible("#rs-start-why >> text=Type your question first"), "and says why");
     await qa.click(`[data-open="${answer}"]`);
     await qa.waitForSelector(".rs-answer #rs-findings");
     check(await qa.isVisible("text=How do live resin carts affect studying?"), "the answer shows the question");
@@ -612,6 +612,63 @@ function plantResearchQueue() {
     await qphone.screenshot({ path: path.join(SHOTS, "w390-research-answer.png"), fullPage: true });
     check(await noHorizontalScroll(qphone), "390px answer: no sideways scrolling");
     await qphone.context().close();
+
+    step("Research launcher and saved guides");
+    const rl = await newPage(browser, `${url}?view=research`);
+    await rl.waitForSelector("#rs-start");
+    check(await rl.$eval("#rs-job", (el) => getComputedStyle(el).display === "none"), "empty run boxes leave no gap under the heading");
+    await rl.click(".rs-topic:has(input[value=custom])");
+    check(await rl.evaluate(() => document.activeElement?.id === "rs-query"), "Custom search opens its field, focused");
+    check(await rl.isDisabled("#rs-start"), "an empty custom search can't start");
+    await rl.fill("#rs-query", "cold cure");
+    check(await waitFor(async () => !(await rl.isDisabled("#rs-start"))), "typing what to search for allows it");
+    check(/“cold cure”/.test(await rl.textContent(".rs-summary-line")), "the footer sums up what will run");
+    await rl.focus("[data-depth=deep]");
+    await rl.keyboard.press("Enter");
+    check(await rl.evaluate(() => document.activeElement?.dataset.depth === "deep" && document.activeElement.getAttribute("aria-pressed") === "true"),
+      "picking a depth by keyboard keeps focus on it");
+    /* No run may really start: answer the request here, slowly, as a refusal. */
+    let posts = 0;
+    await rl.route("**/api/research/jobs", async (route) => {
+      posts += 1;
+      await sleep(400);
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "A research run is already going." }) });
+    });
+    await rl.evaluate(() => {
+      document.getElementById("rs-start").click();
+      document.getElementById("rs-start").click();
+      startRun();
+    });
+    check(await waitFor(() => rl.isVisible(".rs-start-error >> text=already going")), "a refused start says why");
+    check(posts === 1, `clicking Start twice sends one request (${posts})`);
+    check(!(await rl.isDisabled("#rs-start")), "and the button comes back after the failure");
+    await rl.unroute("**/api/research/jobs");
+    await rl.reload();
+    await rl.waitForSelector("#rs-start");
+    check((await rl.inputValue("#rs-query")) === "cold cure" && await rl.isChecked("input[name=rs-topic][value=custom]")
+      && (await rl.getAttribute("[data-depth=deep]", "aria-pressed")) === "true", "a reload keeps the form as it was");
+
+    const count = (which) => rl.$eval(`[data-list=${which}] .tab-count`, (el) => Number(el.textContent));
+    await rl.waitForSelector(`[data-archive="${guide}"]`);
+    const before = [await count("active"), await count("archived")];
+    await rl.click(`[data-archive="${guide}"]`);
+    check(await waitFor(async () => (await count("active")) === before[0] - 1 && (await count("archived")) === before[1] + 1),
+      "archiving moves the count from Active to Archived at once");
+    check(!/report=/.test(rl.url()), "the Archive button doesn't also open the guide");
+    check(await rl.evaluate(() => document.activeElement?.matches(".rs-report-open")), "focus moves to the next guide");
+    await rl.click("[data-list=archived]");
+    await rl.click(`[data-archive="${guide}"]`);
+    check(await waitFor(async () => (await count("archived")) === before[1]), "unarchiving moves it back");
+    await rl.click("[data-list=active]");
+    rl.once("dialog", (dialog) => dialog.dismiss());
+    await rl.click(`[data-delete="${guide}"]`);
+    check(await rl.isVisible(`[data-open="${guide}"]`) && !/report=/.test(rl.url()), "cancelling Delete keeps the guide, and doesn't open it");
+    await rl.selectOption("#rs-lf-topic", "question");
+    check((await rl.$$(".rs-report-item")).length === 1 && await rl.isVisible(".rs-list-count >> text=Showing 1 of"), "filtering by type narrows the list");
+    await rl.click(".rs-list-count [data-act=clear-list-filters]");
+    check((await rl.$$(".rs-report-item")).length === 2, "Clear filters shows them all again");
+    check(rl.errors.length === 0, `launcher no script errors (${rl.errors.join(" | ")})`);
+    await rl.context().close();
 
     /* ── Layout ────────────────────────────────────────────────────────── */
     step("Layouts");

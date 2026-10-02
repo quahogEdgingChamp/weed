@@ -3170,6 +3170,12 @@ thead th {
   gap: var(--s-5);
 }
 
+/* The live run, queue and paused boxes are empty most of the time; left in
+   the flow, each still took a gap and opened a hole under the hero. */
+.rs-home > div:empty {
+  display: none;
+}
+
 .rs-h2 {
   font-size: 1.2rem;
   letter-spacing: -0.015em;
@@ -3229,12 +3235,20 @@ thead th {
   padding: var(--s-5);
 }
 
-.rs-topics {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: var(--s-2);
+.rs-topics-set {
+  min-width: 0;
+  margin: 0;
   padding: 0;
   border: 0;
+}
+
+/* Three across on a desktop, two on a tablet, one on a phone: never so
+   narrow that a two-word type breaks over three lines. */
+.rs-topics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: var(--s-2);
+  margin-top: var(--s-2);
 }
 
 .rs-topic {
@@ -3252,6 +3266,7 @@ thead th {
 
 .rs-topic:hover {
   border-color: var(--line-strong);
+  background: var(--surface-2);
 }
 
 .rs-topic input {
@@ -3263,14 +3278,23 @@ thead th {
 .rs-topic:has(input:checked) {
   border-color: var(--accent);
   background: var(--accent-wash);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+/* Focus is an outline, selection a filled border: a keyboard user can tell
+   the card they're on from the one that's picked. */
 .rs-topic:has(input:focus-visible) {
-  box-shadow: 0 0 0 3px var(--accent-ring);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.rs-topic input:focus-visible {
+  outline: none;
 }
 
 .rs-topic-label {
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .rs-topic-blurb {
@@ -3282,6 +3306,7 @@ thead th {
 .rs-query {
   display: grid;
   gap: var(--s-1);
+  margin-top: var(--s-3);
   max-width: 560px;
   color: var(--ink-2);
   font-size: 0.85rem;
@@ -3302,12 +3327,82 @@ thead th {
 }
 
 .rs-option-label {
-  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 0;
+  font-size: 0.9rem;
   font-weight: 600;
 }
 
+/* The order to fill the form in: 1 what, 2 how deep, 3 who, 4 model. */
+.rs-num {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--ink-2);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.rs-sub-label {
+  display: block;
+  margin-bottom: var(--s-1);
+  color: var(--ink-2);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.rs-row-label {
+  grid-column: 1 / -1;
+  margin-bottom: calc(-1 * var(--s-2));
+}
+
+.rs-depth-facts {
+  display: grid;
+  gap: 2px;
+  margin: var(--s-2) 0 var(--s-1);
+  font-size: 0.82rem;
+}
+
+.rs-depth-facts div {
+  display: grid;
+  grid-template-columns: 4.2em 1fr;
+  gap: var(--s-2);
+}
+
+.rs-depth-facts dt {
+  color: var(--ink-3);
+}
+
+.rs-depth-facts dd {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+/* An option that only refines the one above it. */
+.rs-sub {
+  margin-top: var(--s-2);
+  padding-left: var(--s-3);
+  border-left: 2px solid var(--line-strong);
+}
+
+.rs-sub .rs-check {
+  min-height: 32px;
+  font-size: 0.85rem;
+}
+
+.rs-sub.is-moot .rs-check {
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+
 .rs-check {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: var(--s-2);
   min-height: 36px;
@@ -3320,6 +3415,7 @@ thead th {
 }
 
 .rs-model-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   padding-top: 0;
   border-top: 0;
 }
@@ -3357,6 +3453,50 @@ label.rs-option-label {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--s-2);
+}
+
+/* What will run, and the button, as one footer of the form. */
+.rs-start-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3) var(--s-4);
+  margin: 0 calc(-1 * var(--s-5)) calc(-1 * var(--s-5));
+  padding: var(--s-4) var(--s-5);
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+  background: var(--surface-2);
+}
+
+.rs-summary {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.rs-summary-line {
+  font-size: 0.9rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.rs-start-error {
+  flex-basis: 100%;
+}
+
+.rs-summary .is-problem {
+  color: var(--ink);
+}
+
+.rs-start:disabled {
+  opacity: 0.55;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.rs-icon-btn {
+  min-width: 40px;
+  min-height: 40px;
 }
 
 .rs-options .segmented button:disabled {
@@ -3506,12 +3646,13 @@ label.rs-option-label {
 }
 
 .rs-report-open {
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
   gap: 3px;
   min-width: 0;
-  padding: var(--s-4);
+  padding: var(--s-4) calc(var(--s-4) + 22px) var(--s-4) var(--s-4);
   border: 0;
   background: none;
   color: inherit;
@@ -3520,8 +3661,64 @@ label.rs-option-label {
   cursor: pointer;
 }
 
-.rs-report-item:hover {
+.rs-report-item:has(.rs-report-open:hover) {
   border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+
+.rs-report-stats {
+  margin-top: 2px;
+  color: var(--ink-2);
+  font-size: 0.84rem;
+}
+
+.rs-report-by {
+  color: var(--ink-3);
+  font-size: 0.8rem;
+}
+
+/* "Opens": the whole row is the link; the chevron says so. */
+.rs-open-cue {
+  position: absolute;
+  top: 50%;
+  right: var(--s-2);
+  width: 16px;
+  height: 16px;
+  color: var(--ink-3);
+  transform: translateY(-50%);
+  transition: transform 0.15s, color 0.15s;
+}
+
+.rs-report-open:hover .rs-open-cue,
+.rs-report-open:focus-visible .rs-open-cue {
+  color: var(--accent-ink);
+  transform: translate(2px, -50%);
+}
+
+.rs-skeleton {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-4);
+}
+
+.rs-skeleton span {
+  height: 10px;
+  border-radius: 6px;
+  background: var(--surface-3);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.rs-skeleton span:nth-child(1) {
+  width: 28%;
+}
+
+.rs-skeleton span:nth-child(2) {
+  width: 70%;
+  height: 16px;
+}
+
+.rs-skeleton span:nth-child(3) {
+  width: 45%;
 }
 
 .rs-report-open:focus-visible {
@@ -3533,6 +3730,7 @@ label.rs-option-label {
 .rs-report-title {
   font-size: 1.02rem;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 /* ── Report ── */
@@ -5068,10 +5266,6 @@ thead th {
   border-radius: var(--r-md);
 }
 
-.rs-topic:has(input:checked) {
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
-
 .rs-card {
   border-top-width: 4px;
 }
@@ -5142,8 +5336,30 @@ thead th {
   cursor: default;
 }
 
+.rs-list-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.rs-list-sort,
+.rs-list-filter {
+  min-width: 150px;
+}
+
 .rs-list-sort {
   min-width: 190px;
+}
+
+.rs-list-count {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: calc(-1 * var(--s-2)) 0 var(--s-2);
+}
+
+.rs-empty .btn {
+  margin-top: var(--s-2);
 }
 
 /* "Who wrote it", "Deepest first" and "Topic" split the list under headings. */
@@ -5177,6 +5393,15 @@ thead th {
   gap: 2px;
 }
 
+.rs-item-actions .btn {
+  min-width: 40px;
+  min-height: 40px;
+}
+
+.rs-report-delete:hover {
+  color: var(--danger);
+}
+
 .rs-report-item.is-archived .rs-report-title {
   color: var(--ink-2);
 }
@@ -5186,14 +5411,58 @@ thead th {
     display: none;
   }
 
-  .rs-list-sort {
+  .rs-list-tools,
+  .rs-list-sort,
+  .rs-list-filter {
     flex: 1 1 100%;
+  }
+
+  .rs-list-tools .rs-list-filter {
+    flex: 1 1 140px;
+  }
+
+  .rs-start-row,
+  .rs-start-row .btn {
+    flex: 1 1 100%;
+  }
+
+  .rs-start-foot {
+    margin: 0 calc(-1 * var(--s-4)) calc(-1 * var(--s-4));
+    padding: var(--s-4);
+  }
+
+  /* On a phone the actions sit under the guide, so a long title gets the
+     full width instead of a narrow column beside them. */
+  .rs-report-item {
+    flex-wrap: wrap;
+    gap: 0;
+    padding-right: 0;
+  }
+
+  .rs-report-open {
+    flex-basis: 100%;
+    padding-bottom: var(--s-1);
+  }
+
+  .rs-item-actions {
+    margin-left: auto;
+    padding: 0 var(--s-2) var(--s-2);
   }
 }
 
-.rs-writers {
-  grid-template-columns: repeat(4, auto);
-  max-width: none;
+/* With "Counts only" ticked no writer is picked; the buttons stay to
+   pick one again. */
+.rs-writers.is-off button {
+  color: var(--ink-3);
+}
+
+.rs-modes {
+  grid-template-columns: repeat(2, auto);
+  margin: 0;
+}
+
+.rs-modes button {
+  padding: 0 0.9rem;
 }
 
 /* Runs waiting to continue after a usage limit, a stop or a restart. */

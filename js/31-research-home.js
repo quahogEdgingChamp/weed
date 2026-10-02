@@ -56,12 +56,13 @@ async function showHome() {
         <div id="rs-launch"></div>
         <section class="rs-saved" aria-labelledby="rs-saved-heading">
           <h2 id="rs-saved-heading" class="rs-h2">Saved guides</h2>
-          <div id="rs-reports"><p class="muted">Loading…</p></div>
+          <div id="rs-reports" aria-busy="true">${skeletonList()}</div>
         </section>
       </div>`;
   }
   if (!ui.overview) await loadOverview();
   if (reportParam()) return; /* the user moved on while this loaded */
+  qs("#rs-reports")?.removeAttribute("aria-busy");
   renderLaunch();
   renderJob();
   renderQueue();
@@ -71,131 +72,201 @@ async function showHome() {
   if (ui.overview?.job?.status === "running" || queueEntries().length) startPolling();
 }
 
+/* What the launcher shows depends on these; a poll redraws it only when one
+   changed, so a form being filled in isn't redrawn every few seconds. */
+function launchKey() {
+  const o = ui.overview || {};
+  const available = Object.entries(o.providers || {}).map(([p, v]) => `${p}:${Boolean(v?.available)}`);
+  return [o.job?.status === "running", JSON.stringify(o.queue?.limited || {}), available.join(","), ui.overviewError].join("|");
+}
+
+const STEP = (n) => `<span class="rs-num" aria-hidden="true">${n}</span>`;
+
+/* How far each depth goes, as short facts rather than a paragraph. */
+function depthFacts(o, asking) {
+  const deepMode = o.depths?.deep?.mode === "batches";
+  if (asking) {
+    return {
+      quick: ["4 subreddits, the last 2 years", "the ~30 most relevant threads, in one pass"],
+      standard: ["6 subreddits, the last 3 years", "~80 threads, in one pass"],
+      deep: ["8 subreddits, the last 5 years", "~200 threads and a comment search, in parts"],
+    }[ui.depth];
+  }
+  return {
+    quick: [`the last ${o.depths.quick?.days || 120} days`, "the ~30 most relevant threads, in one pass"],
+    standard: [`the last ${o.depths.standard?.days || 365} days`, "~90 threads, in one pass"],
+    deep: deepMode
+      ? ["the last year, plus a brand search across the subreddits", "every relevant thread and every comment, in parts"]
+      : [`the last ${o.depths.deep?.days || 365} days`, "restart the server to get the new deep mode"],
+  }[ui.depth];
+}
+
+function runMinutes() {
+  return (ui.provider !== "none"
+    ? { quick: "3–6 min", standard: "6–12 min", deep: "20–45 min" }
+    : { quick: "1–3 min", standard: "2–5 min", deep: "5–15 min" })[ui.depth];
+}
+
+const WRITER_HINT = {
+  claude: "Uses your Claude Code plan through the claude CLI.",
+  codex: "Uses your ChatGPT / Codex plan through the codex CLI.",
+  grok: "Uses your SuperGrok / X Premium+ plan through the grok CLI (Grok Build).",
+  none: "No model: tiers come from mention counts and a keyword tone score. Rougher, but free and quicker.",
+};
+
+/* Placeholder rows the size of saved guides, so the page doesn't jump
+   when the list arrives. */
+function skeletonList() {
+  return `<span class="sr-only">Loading saved guides…</span><ul class="rs-report-list" aria-hidden="true">${
+    '<li class="card rs-skeleton"><span></span><span></span><span></span></li>'.repeat(3)
+  }</ul>`;
+}
+
 function renderLaunch() {
   const box = qs("#rs-launch");
   if (!box) return;
+  ui.launchKey = launchKey();
   if (ui.overviewError) {
     box.innerHTML = `<section class="card rs-launch"><p class="rs-error">${esc(ui.overviewError)}</p>
       <button class="btn btn-secondary" type="button" data-act="reload">Try again</button></section>`;
     return;
   }
   const o = ui.overview;
-  const running = o.job && o.job.status === "running";
   const providers = o.providers || {};
-  const deepMode = o.depths?.deep?.mode === "batches";
   const asking = ui.mode === "question";
   if (asking && ui.provider === "none") ui.provider = WRITERS.find((p) => providers[p]?.available) || "claude";
-  const depthNote = asking ? {
-    quick: "4 subreddits, the last 2 years · the model reads the ~30 most relevant threads",
-    standard: "6 subreddits, the last 3 years · ~80 threads in one pass",
-    deep: "8 subreddits, the last 5 years · ~200 threads and a comment search, read in parts",
-  }[ui.depth] : {
-    quick: `last ${o.depths.quick?.days || 120} days · the model reads the ~30 most relevant threads`,
-    standard: `last ${o.depths.standard?.days || 365} days · the model reads ~90 threads in one pass`,
-    deep: deepMode
-      ? "last year · every relevant thread and every comment, read in parts, plus a brand search across the subreddits"
-      : `last ${o.depths.deep?.days || 365} days · restart the server to get the new deep mode`,
-  }[ui.depth];
+  if (!o.topics.some((t) => t.key === ui.topic)) ui.topic = o.topics[0]?.key || "custom";
   const writing = ui.provider !== "none";
-  const limitedUntil = writing ? o.queue?.limited?.[ui.provider] : null;
-  const minutes = writing
-    ? { quick: "3–6 min", standard: "6–12 min", deep: "20–45 min" }
-    : { quick: "1–3 min", standard: "2–5 min", deep: "5–15 min" };
-  const deepCost =
-    writing && ui.depth === "deep"
-      ? " Deep makes one model call per part (often 8–15) plus one to write, so it uses several times a quick run's plan usage; a lighter model keeps that down."
-      : "";
+  const [covers, reads] = depthFacts(o, asking);
+  const deepCost = writing && ui.depth === "deep"
+    ? "Deep makes one model call per part (often 8–15) plus one to write: several times a quick run's usage. A lighter model keeps that down."
+    : "";
 
-  box.innerHTML = `
+  redrawKeepingFocus(box, () => {
+    box.innerHTML = `
     <section class="card rs-launch" aria-labelledby="rs-new-heading">
       <div class="rs-launch-head">
         <h2 id="rs-new-heading" class="panel-title">New research</h2>
-        <div class="segmented" role="group" aria-label="What kind of research">
+        <div class="segmented rs-modes" role="group" aria-label="What kind of research">
           <button type="button" data-mode="guide" aria-pressed="${!asking}">Product guide</button>
           <button type="button" data-mode="question" aria-pressed="${asking}">Ask a question</button>
         </div>
       </div>
-      ${asking ? `<label class="rs-ask">
-        <span>Ask anything. The writer picks where on Reddit people talk about it, searches there, reads the threads
-        and answers from what people actually report, with their words quoted.</span>
-        <textarea id="rs-question" rows="3" maxlength="300" placeholder="How do live resin carts affect studying? · Is a dry herb vape worth it over joints? · What helps with cotton mouth?">${esc(ui.question)}</textarea>
-      </label>` : ""}
-      <fieldset class="rs-topics" ${asking ? "hidden" : ""}>
-        <legend class="sr-only">What to research</legend>
-        ${o.topics
-          .map(
-            (t) => `<label class="rs-topic">
-              <input type="radio" name="rs-topic" value="${esc(t.key)}" ${ui.topic === t.key ? "checked" : ""} />
-              <span class="rs-topic-label">${esc(t.label)}</span>
-              <span class="rs-topic-blurb">${esc(t.blurb)}</span>
-            </label>`
-          )
-          .join("")}
-      </fieldset>
-      <label class="rs-query" ${ui.topic === "custom" && !asking ? "" : "hidden"}>
-        <span>What should it look for? Every word has to appear in a post.</span>
-        <input id="rs-query" type="text" maxlength="120" placeholder="cold cure rosin, blueberry cart, infused pre-roll…" value="${esc(ui.query)}" />
-      </label>
+      <div class="rs-field">
+        ${asking ? `<label class="rs-option-label" for="rs-question">${STEP(1)}Your question</label>
+        <div class="rs-ask">
+          <span>The writer picks where on Reddit people talk about it, searches there, reads the threads and answers
+          from what people actually report, with their words quoted.</span>
+          <textarea id="rs-question" rows="3" maxlength="300" placeholder="How do live resin carts affect studying? · Is a dry herb vape worth it over joints? · What helps with cotton mouth?">${esc(ui.question)}</textarea>
+        </div>` : `<fieldset class="rs-topics-set">
+          <legend class="rs-option-label">${STEP(1)}What to research</legend>
+          <div class="rs-topics">
+          ${o.topics
+            .map(
+              (t) => `<label class="rs-topic">
+                <input type="radio" name="rs-topic" value="${esc(t.key)}" ${ui.topic === t.key ? "checked" : ""} />
+                <span class="rs-topic-label">${esc(t.label)}</span>
+                <span class="rs-topic-blurb">${esc(t.blurb)}</span>
+              </label>`
+            )
+            .join("")}
+          </div>
+        </fieldset>
+        <label class="rs-query" ${ui.topic === "custom" ? "" : "hidden"}>
+          <span>What should it look for? Every word has to appear in a post.</span>
+          <input id="rs-query" type="text" maxlength="120" placeholder="e.g. cold cure rosin, blueberry cart, infused pre-roll" value="${esc(ui.query)}" />
+        </label>`}
+      </div>
       <div class="rs-options">
         <div>
-          <p class="rs-option-label" id="rs-depth-label">How deep</p>
+          <p class="rs-option-label" id="rs-depth-label">${STEP(2)}How deep</p>
           <div class="segmented" role="group" aria-labelledby="rs-depth-label">
             ${["quick", "standard", "deep"]
-              .map(
-                (d) => `<button type="button" data-depth="${d}" aria-pressed="${ui.depth === d}">${d[0].toUpperCase()}${d.slice(1)}</button>`
-              )
+              .map((d) => `<button type="button" data-depth="${d}" aria-pressed="${ui.depth === d}">${DEPTH_LABEL[d]}</button>`)
               .join("")}
           </div>
-          <p class="rs-hint">${esc(depthNote)} · about ${minutes[ui.depth]} the first time, quicker after.${esc(deepCost)}</p>
+          <dl class="rs-depth-facts">
+            <div><dt>Covers</dt><dd>${esc(covers)}</dd></div>
+            <div><dt>Reads</dt><dd>${esc(reads)}</dd></div>
+            <div><dt>Takes</dt><dd>about ${esc(runMinutes())} the first time, quicker after</dd></div>
+          </dl>
+          ${deepCost ? `<p class="rs-hint">${esc(deepCost)}</p>` : ""}
         </div>
         <div>
-          <p class="rs-option-label" id="rs-writer-label">Who writes the guide</p>
-          <div class="segmented rs-writers" role="group" aria-labelledby="rs-writer-label">
-            ${[...WRITERS, "none"]
-              .map((p) => {
-                const available = p === "none" ? !asking : providers[p]?.available;
-                return `<button type="button" data-provider="${p}" aria-pressed="${ui.provider === p}" ${available ? "" : "disabled"}
-                  ${available ? "" : `title="${p === "none" ? "A question needs a model to plan the search and write the answer" : `The ${p} CLI isn't installed on the server`}"`}>${PROVIDER_LABEL[p]}</button>`;
-              })
-              .join("")}
+          <p class="rs-option-label" id="rs-writer-label">${STEP(3)}${asking ? "Who answers" : "Who writes the guide"}</p>
+          <div class="segmented rs-writers${writing ? "" : " is-off"}" role="group" aria-labelledby="rs-writer-label">
+            ${WRITERS.map((p) => {
+              const available = providers[p]?.available;
+              return `<button type="button" data-provider="${p}" aria-pressed="${ui.provider === p}" ${available ? "" : "disabled"}
+                ${available ? "" : `title="The ${p} CLI isn't installed on the server"`}>${PROVIDER_LABEL[p]}</button>`;
+            }).join("")}
           </div>
-          <p class="rs-hint">${esc(
-            ui.provider === "claude"
-              ? "Uses your Claude Code plan through the claude CLI."
-              : ui.provider === "codex"
-                ? "Uses your ChatGPT / Codex plan through the codex CLI."
-                : ui.provider === "grok"
-                  ? "Uses your SuperGrok / X Premium+ plan through the grok CLI (Grok Build)."
-                  : "Tiers come from mention counts and a keyword tone score. Rougher, but free and quicker."
-          )}${writing ? " Every quote is checked against the real comment." : ""}</p>
+          <p class="rs-hint">${esc(WRITER_HINT[ui.provider] || "")}${writing ? " Every quote is checked against the real comment." : ""}</p>
+          ${asking ? "" : `<label class="rs-check"><input type="checkbox" id="rs-counts" ${writing ? "" : "checked"} />
+            Counts only: no model writes it</label>`}
+          ${writing ? `<label class="rs-check"><input type="checkbox" id="rs-auto" ${ui.autoContinue ? "checked" : ""} />
+            Automatically resume when the ${esc(PROVIDER_LABEL[ui.provider])} usage limit resets</label>` : ""}
         </div>
       </div>
-      ${writing ? `<div class="rs-options rs-model-row" id="rs-model-row">${modelControls()}</div>` : ""}
-      ${
-        writing
-          ? `<label class="rs-check"><input type="checkbox" id="rs-auto" ${ui.autoContinue ? "checked" : ""} />
-              If ${esc(PROVIDER_LABEL[ui.provider])} hits its usage limit, continue by itself when the limit resets</label>`
-          : ""
-      }
-      <div class="rs-start-row">
-        <button id="rs-start" class="btn btn-primary rs-start" type="button" ${ui.starting ? "disabled" : ""}>
-          ${ui.starting ? "Starting…" : running ? "Add to queue" : limitedUntil ? `Queue for ${esc(clock(limitedUntil))}` : "Start research"}
-        </button>
-        ${
-          limitedUntil && !running
-            ? `<button class="btn btn-secondary" type="button" data-act="start-now">Start now anyway</button>`
-            : ""
-        }
-      </div>
-      ${
-        running
-          ? `<p class="rs-hint">One run at a time: this one starts when the runs ahead of it finish.</p>`
-          : limitedUntil
-            ? `<p class="rs-hint">${esc(PROVIDER_LABEL[ui.provider])}'s usage limit should reset about ${esc(clock(limitedUntil))}; queued runs with it wait until then.</p>`
-            : ""
-      }
-      ${ui.startError ? `<p class="rs-error" role="alert">${esc(ui.startError)}</p>` : ""}
+      ${writing ? `<div class="rs-options rs-model-row" id="rs-model-row" role="group" aria-labelledby="rs-model-label">${modelControls()}</div>` : ""}
+      <div class="rs-start-foot" id="rs-start-foot">${startFoot()}</div>
     </section>`;
+  });
+}
+
+/* The footer: what will run, roughly how long, and the button. Redrawn on
+   its own as the form changes, so typing never loses its place. */
+function startFoot() {
+  const o = ui.overview;
+  const running = o.job && o.job.status === "running";
+  const writing = ui.provider !== "none";
+  const limitedUntil = writing ? o.queue?.limited?.[ui.provider] : null;
+  const asking = ui.mode === "question";
+  const problem = Core.researchStartProblem({ mode: ui.mode, topic: ui.topic, query: ui.query, question: ui.question, provider: ui.provider });
+  const topic = asking
+    ? "Question"
+    : ui.topic === "custom"
+      ? ui.query.trim() ? `“${ui.query.trim()}”` : "Custom search"
+      : o.topics.find((t) => t.key === ui.topic)?.label || ui.topic;
+  const parts = [topic, DEPTH_LABEL[ui.depth]];
+  if (writing) {
+    const c = ui.choice[ui.provider];
+    const listed = (ui.models[ui.provider]?.models || []).find((m) => m.id === c.model);
+    const model = c.model === "__custom" ? c.custom.trim() || "a typed model" : listed?.label || c.model || "default model";
+    parts.push(`${PROVIDER_LABEL[ui.provider]} / ${model}`);
+    if (c.effort) {
+      const light = ui.lightReading && Core.lightReadingApplies({ mode: ui.mode, depth: ui.depth, provider: ui.provider, effort: c.effort });
+      parts.push(`${c.effort[0].toUpperCase()}${c.effort.slice(1)} thinking${light ? " (reads at medium)" : ""}`);
+    }
+  } else {
+    parts.push("Counts only");
+  }
+  const label = ui.starting ? "Starting…" : running ? "Add to queue" : limitedUntil ? `Queue for ${clock(limitedUntil)}` : "Start research";
+  return `
+    <div class="rs-summary">
+      <p class="rs-summary-line">${esc(parts.join(" · "))}</p>
+      <p class="rs-hint${problem ? " is-problem" : ""}" id="rs-start-why">${esc(
+        problem ||
+          (running
+            ? "One run at a time: this one starts when the runs ahead of it finish."
+            : limitedUntil
+              ? `${PROVIDER_LABEL[ui.provider]}'s usage limit should reset about ${clock(limitedUntil)}; queued runs with it wait until then.`
+              : `About ${runMinutes()} the first time.`)
+      )}</p>
+    </div>
+    <div class="rs-start-row">
+      ${limitedUntil && !running && !ui.starting
+        ? `<button class="btn btn-secondary" type="button" data-act="start-now" ${problem ? "disabled" : ""}>Start now anyway</button>`
+        : ""}
+      <button id="rs-start" class="btn btn-primary rs-start" type="button" aria-describedby="rs-start-why"
+        ${ui.starting || problem ? "disabled" : ""} ${ui.starting ? 'aria-busy="true"' : ""}>${esc(label)}</button>
+    </div>
+    ${ui.startError ? `<p class="rs-error rs-start-error" role="alert">${esc(ui.startError)}</p>` : ""}`;
+}
+
+function drawStartFoot() {
+  const foot = qs("#rs-start-foot");
+  if (foot) redrawKeepingFocus(foot, () => (foot.innerHTML = startFoot()));
 }
 
 /* The model list comes from the CLI itself, through the server. */
@@ -216,7 +287,8 @@ async function loadModels(provider, { refresh = false } = {}) {
 
 function redrawModels() {
   const row = qs("#rs-model-row");
-  if (row) row.innerHTML = modelControls();
+  if (row) redrawKeepingFocus(row, () => (row.innerHTML = modelControls()));
+  drawStartFoot();
 }
 
 function currentModel(provider = ui.provider) {
@@ -224,6 +296,9 @@ function currentModel(provider = ui.provider) {
   return c.model === "__custom" ? c.custom.trim() : c.model;
 }
 
+/* Model and thinking for the picked writer. Each writer keeps its own
+   choice, so switching writers never carries a model across; a model the
+   CLI no longer lists falls back to its default (Core.settleModelChoice). */
 function modelControls() {
   const provider = ui.provider;
   if (provider === "none") return "";
@@ -232,58 +307,64 @@ function modelControls() {
     window.setTimeout(() => loadModels(provider), 0);
   }
   const models = entry?.models || [];
-  const c = ui.choice[provider];
-  const known = models.some((m) => m.id === c.model);
-  if (c.model && c.model !== "__custom" && !known && entry?.state === "ready") {
-    c.custom = c.model;
-    c.model = "__custom";
+  const settled = Core.settleModelChoice(ui.choice[provider], entry, provider);
+  if (JSON.stringify(settled.choice) !== JSON.stringify(ui.choice[provider])) {
+    ui.choice[provider] = settled.choice;
+    saveResearchPrefs();
   }
-  const chosen = models.find((m) => m.id === c.model);
-  const fallback = provider === "claude" ? models[0] : models.find((m) => m.default) || models[0];
-  const efforts = chosen
-    ? chosen.efforts || []
-    : c.model === "__custom" || !models.length
-      ? ["low", "medium", "high", "xhigh", "max"]
-      : (fallback && fallback.efforts) || [];
-  if (c.effort && !efforts.includes(c.effort)) c.effort = "";
-  const defaultLabel =
-    provider !== "claude" && fallback ? `CLI default (${fallback.label})` : "CLI default";
-  const describe = chosen?.description || (c.model === "" && fallback ? "" : "");
+  if (settled.dropped) ui.droppedModel = { provider, model: settled.dropped };
+  const c = ui.choice[provider];
+  const { chosen, fallback, efforts } = settled;
+  const dropped = ui.droppedModel?.provider === provider && !c.model ? ui.droppedModel.model : "";
+  const defaultLabel = provider !== "claude" && fallback ? `CLI default (${fallback.label})` : "CLI default";
+  const modelHint =
+    entry?.state === "loading"
+      ? "Asking the CLI which models it has…"
+      : dropped
+        ? `${dropped} isn't in ${PROVIDER_LABEL[provider]}'s model list any more, so the CLI default is used.`
+        : chosen?.description || entry?.note || "";
+  const heavy = ["high", "xhigh", "max", "ultra"].includes(c.effort);
+  const applies = Core.lightReadingApplies({ mode: ui.mode, depth: ui.depth, provider, effort: c.effort });
+  const lightHint = !applies
+    ? `No effect on this run: a ${DEPTH_LABEL[ui.depth].toLowerCase()} guide is read in one pass, all at ${c.effort}. It matters for Deep, for Grok and for questions, which read the evidence in parts.`
+    : ui.lightReading
+      ? "Much faster and lighter on your plan; the guide still gets full thinking."
+      : `Every part at ${c.effort}: slow (Grok took 7–20 min per part at xhigh), and heavy on your plan.`;
   return `
+    <p class="rs-option-label rs-row-label" id="rs-model-label">${STEP(4)}Model and thinking</p>
     <div>
-      <label class="rs-option-label" for="rs-model">Model</label>
+      <label class="rs-sub-label" for="rs-model">Model</label>
       <div class="rs-inline">
         <label class="select rs-grow"><select id="rs-model">
           <option value="" ${c.model === "" ? "selected" : ""}>${esc(defaultLabel)}</option>
           ${models.map((m) => `<option value="${esc(m.id)}" ${c.model === m.id ? "selected" : ""}>${esc(m.label)}</option>`).join("")}
           <option value="__custom" ${c.model === "__custom" ? "selected" : ""}>Other (type a name)…</option>
         </select></label>
-        <button class="btn btn-ghost btn-small" type="button" data-act="refresh-models" title="Ask the CLI for its models again"
+        <button class="btn btn-ghost btn-small rs-icon-btn" type="button" data-act="refresh-models" title="Ask the CLI for its models again"
           ${entry?.state === "loading" ? "disabled" : ""}>
           <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg><span class="sr-only">Refresh the model list</span>
         </button>
       </div>
-      ${c.model === "__custom" ? `<input id="rs-model-custom" type="text" maxlength="80" spellcheck="false" placeholder="${{ codex: "gpt-6-sol", grok: "grok-4.7", claude: "claude-sonnet-5" }[provider] || ""}" value="${esc(c.custom)}" />` : ""}
-      <p class="rs-hint">${esc(
-        entry?.state === "loading" ? "Asking the CLI which models it has…" : describe || entry?.note || ""
-      )}</p>
+      ${c.model === "__custom" ? `<input id="rs-model-custom" type="text" maxlength="80" spellcheck="false" aria-label="Model name" placeholder="${{ codex: "gpt-6-sol", grok: "grok-4.7", claude: "claude-sonnet-5" }[provider] || ""}" value="${esc(c.custom)}" />` : ""}
+      <p class="rs-hint">${esc(modelHint)}</p>
     </div>
     <div>
-      <label class="rs-option-label" for="rs-effort">Thinking</label>
-      <label class="select"><select id="rs-effort" ${efforts.length ? "" : "disabled"}>
+      <label class="rs-sub-label" for="rs-effort">Thinking</label>
+      <label class="select"><select id="rs-effort" ${efforts.length ? "" : "disabled"} aria-describedby="rs-effort-hint">
         <option value="" ${c.effort === "" ? "selected" : ""}>Default</option>
         ${efforts.map((e) => `<option value="${esc(e)}" ${c.effort === e ? "selected" : ""}>${esc(e[0].toUpperCase() + e.slice(1))}</option>`).join("")}
       </select></label>
-      <p class="rs-hint">${esc(
-        efforts.length
-          ? "Higher thinks longer: better judgement, slower, more usage."
-          : "This model has no thinking setting."
+      <p class="rs-hint" id="rs-effort-hint">${esc(
+        efforts.length ? "Higher thinks longer: better judgement, slower, more usage." : "This model has no thinking setting."
       )}</p>
       ${
-        ["high", "xhigh", "max", "ultra"].includes(c.effort)
-          ? `<label class="rs-check rs-light"><input type="checkbox" id="rs-light" ${ui.lightReading ? "checked" : ""} />
-              Read the evidence at medium thinking, and use ${esc(c.effort)} only for writing the guide</label>
-            <p class="rs-hint">${ui.lightReading ? "Much faster and lighter on your plan; the guide still gets full thinking." : "Every part at " + esc(c.effort) + ": slow (Grok took 7–20 min per part at xhigh), and heavy on your plan."}</p>`
+        heavy
+          ? `<div class="rs-sub${applies ? "" : " is-moot"}">
+              <label class="rs-check"><input type="checkbox" id="rs-light" ${ui.lightReading ? "checked" : ""} ${applies ? "" : "disabled"}
+                aria-describedby="rs-light-hint" />
+                Read the evidence at medium thinking; use ${esc(c.effort)} only to write</label>
+              <p class="rs-hint" id="rs-light-hint">${esc(lightHint)}</p>
+            </div>`
           : ""
       }
     </div>`;
@@ -563,6 +644,8 @@ function renderPaused() {
 }
 
 async function resumeRun(checkpoint, provider, model, effort) {
+  if (ui.resuming) return; /* a double click would ask twice */
+  ui.resuming = true;
   ui.startError = "";
   const queue = ui.overview?.job?.status === "running";
   try {
@@ -588,6 +671,8 @@ async function resumeRun(checkpoint, provider, model, effort) {
     window.Cloudline?.toast(
       error.message === "Not found" ? "Continuing needs the server restarted (sudo systemctl restart weed)." : error.message
     );
+  } finally {
+    ui.resuming = false;
   }
 }
 
@@ -622,7 +707,7 @@ const EFFORT_RANK = ["ultra", "max", "xhigh", "high", "medium", "low", "minimal"
 
 /* The writer a guide is filed under: its provider, or "counts" when no
    model wrote it. Old guides may not say; they count as counts-only. */
-const writerOf = (r) => (!r.by || r.by === "counts" ? "counts" : r.by);
+const writerOf = Core.reportWriter;
 // Same order as the launcher: Claude, Codex, Grok, anything else, counts last.
 const writerRank = (r) => (writerOf(r) === "counts" ? WRITERS.length + 1 : WRITERS.includes(r.by) ? WRITERS.indexOf(r.by) : WRITERS.length);
 const effortRank = (r) => (EFFORT_RANK.includes(r.effort) ? EFFORT_RANK.indexOf(r.effort) : EFFORT_RANK.length);
@@ -696,9 +781,20 @@ function reportGroup(g) {
   </section>`;
 }
 
+const LIST_FACETS = [
+  ["writer", "All writers", (v) => (v === "counts" ? "Counts only" : PROVIDER_LABEL[v] || v)],
+  ["topic", "All types", (v) => (v === "question" ? "Questions" : v)],
+  ["depth", "All depths", (v) => DEPTH_LABEL[v] || v],
+];
+
 function renderReportList() {
   const box = qs("#rs-reports");
-  if (!box || !ui.overview) return;
+  if (!box) return;
+  if (!ui.overview) {
+    if (ui.overviewError) box.innerHTML = `<p class="rs-empty">Saved guides couldn't be loaded.</p>`;
+    return;
+  }
+  ui.reportsDrawn = ui.overview.reports;
   const reports = ui.overview.reports || [];
   if (!reports.length) {
     box.innerHTML = `<p class="rs-empty">No guides yet. Pick a topic above and start one: a quick run takes a few minutes.</p>`;
@@ -707,53 +803,98 @@ function renderReportList() {
   const archived = reports.filter((r) => r.archived);
   const active = reports.filter((r) => !r.archived);
   if (ui.listView === "archived" && !archived.length) ui.listView = "active";
-  const shown = sortReports(ui.listView === "archived" ? archived : active);
+  const pool = ui.listView === "archived" ? archived : active;
+  /* A filter for each thing the guides here differ in; a picked value no
+     longer present (archived, deleted) lets go by itself. */
+  const facets = Core.reportFacets(pool);
+  for (const [key] of LIST_FACETS) {
+    if (ui.listFilter[key] && !facets[key].includes(ui.listFilter[key])) ui.listFilter[key] = "";
+  }
+  const filtering = LIST_FACETS.some(([key]) => ui.listFilter[key]);
+  const shown = sortReports(Core.filterReports(pool, ui.listFilter));
+  const filters = LIST_FACETS.filter(([key]) => facets[key].length > 1)
+    .map(([key, all, label]) => `<label class="select rs-list-filter"><span class="sr-only">${esc(all.replace("All ", "Filter by "))}</span>
+      <select id="rs-lf-${key}">
+        <option value="">${esc(all)}</option>
+        ${facets[key].map((v) => `<option value="${esc(v)}" ${ui.listFilter[key] === v ? "selected" : ""}>${esc(label(v))}</option>`).join("")}
+      </select></label>`)
+    .join("");
 
-  box.innerHTML = `
+  redrawKeepingFocus(box, () => {
+    box.innerHTML = `
     <div class="rs-list-bar">
       <div class="segmented rs-list-tabs" role="group" aria-label="Which guides">
         <button type="button" data-list="active" aria-pressed="${ui.listView === "active"}">Active <span class="tab-count">${active.length}</span></button>
         <button type="button" data-list="archived" aria-pressed="${ui.listView === "archived"}" ${archived.length ? "" : "disabled"}>Archived <span class="tab-count">${archived.length}</span></button>
       </div>
-      <label class="select rs-list-sort"><span class="sr-only">Sort guides</span>
-        <select id="rs-list-sort">${LIST_SORTS.map(([v, l]) => `<option value="${v}" ${ui.listSort === v ? "selected" : ""}>${l}</option>`).join("")}</select>
-      </label>
+      <div class="rs-list-tools">
+        ${filters}
+        <label class="select rs-list-sort"><span class="sr-only">Sort guides</span>
+          <select id="rs-list-sort">${LIST_SORTS.map(([v, l]) => `<option value="${v}" ${ui.listSort === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+        </label>
+      </div>
     </div>
+    ${filtering && shown.length ? `<p class="rs-hint rs-list-count">Showing ${shown.length} of ${pool.length}
+      <button class="btn btn-ghost btn-small" type="button" data-act="clear-list-filters">Clear filters</button></p>` : ""}
     ${
       shown.length
         ? groupReports(shown).map(reportGroup).join("")
-        : `<p class="rs-empty">Every guide is archived. <button class="btn btn-ghost btn-small" type="button" data-list="archived">Show archived</button></p>`
+        : filtering
+          ? `<div class="rs-empty"><p>No ${ui.listView} guides match these filters.</p>
+              <button class="btn btn-secondary btn-small" type="button" data-act="clear-list-filters">Clear filters</button></div>`
+          : `<p class="rs-empty">Every guide is archived. <button class="btn btn-ghost btn-small" type="button" data-list="archived">Show archived</button></p>`
     }`;
+  });
 }
 
 function reportItem(r) {
   const s = r.stats || {};
   const title = esc(r.headline || r.name);
-  return `<li class="card rs-report-item${r.archived ? " is-archived" : ""}">
+  const by = writtenBy(r.by, r.model, r.effort);
+  return `<li class="card rs-report-item${r.archived ? " is-archived" : ""}" data-report="${esc(r.name)}">
     <button class="rs-report-open" type="button" data-open="${esc(r.name)}">
       <span class="rs-eyebrow">${r.kind === "question" ? "Question · " : ""}${esc(r.topic?.label || "Research")} · ${esc(when(r.createdAt))} · ${esc(r.depth)}${
         r.archived ? ` · archived${r.archivedAt ? ` ${esc(when(r.archivedAt))}` : ""}` : ""
       }</span>
       <span class="rs-report-title">${esc(r.headline || "Untitled guide")}</span>
       ${r.kind === "question" && r.question ? `<span class="rs-hint rs-asked">“${esc(r.question)}”</span>` : ""}
-      <span class="rs-hint">${r.kind === "question" ? `${r.findings} findings` : `${r.products} products`} · ${num(s.postsScanned)} posts ${r.kind === "question" ? "found" : "scanned"} ·
-        ${num(s.commentsRead)} comments ${s.threadsFetched != null ? "read" : "fetched"} · ${esc(writtenBy(r.by, r.model, r.effort))}${
-          r.readers ? `; parts read by ${esc(Object.entries(r.readers).map(([who, n]) => `${who} ×${n}`).join(", "))}` : ""
-        }</span>
+      <span class="rs-report-stats">${r.kind === "question" ? `${num(r.findings)} findings` : `${num(r.products)} products`} · ${num(s.postsScanned)} posts ${r.kind === "question" ? "found" : "scanned"} ·
+        ${num(s.commentsRead)} comments ${s.threadsFetched != null ? "read" : "fetched"}</span>
+      <span class="rs-report-by">${esc(by[0].toUpperCase() + by.slice(1))}${
+        r.readers ? `; parts read by ${esc(Object.entries(r.readers).map(([who, n]) => `${who} ×${n}`).join(", "))}` : ""
+      }</span>
+      <svg class="icon rs-open-cue" aria-hidden="true"><use href="#i-chevron" /></svg>
     </button>
     <div class="rs-item-actions">
       <button class="btn btn-ghost btn-small" type="button" data-archive="${esc(r.name)}" data-to="${r.archived ? "false" : "true"}"
         title="${r.archived ? "Move back to active" : "Archive"}" aria-label="${r.archived ? "Unarchive" : "Archive"} ${title}">
         <svg class="icon" aria-hidden="true"><use href="#i-archive" /></svg><span class="rs-item-label">${r.archived ? "Unarchive" : "Archive"}</span>
       </button>
-      <button class="btn btn-ghost btn-small rs-report-delete" type="button" data-delete="${esc(r.name)}" aria-label="Delete ${title}">
+      <button class="btn btn-ghost btn-small rs-report-delete" type="button" data-delete="${esc(r.name)}" title="Delete" aria-label="Delete ${title}">
         <svg class="icon" aria-hidden="true"><use href="#i-trash" /></svg>
       </button>
     </div>
   </li>`;
 }
 
+/* After a guide leaves the list, focus the row that took its place (or the
+   list heading), so the keyboard doesn't drop back to the top of the page. */
+function rowIndex(name) {
+  return qsa(".rs-report-item").findIndex((li) => li.dataset.report === name);
+}
+
+function focusRow(index) {
+  if (index < 0) return;
+  const rows = qsa(".rs-report-open");
+  const target = rows[Math.min(index, rows.length - 1)] || qs("#rs-saved-heading");
+  if (!target) return;
+  if (!target.matches("button")) target.setAttribute("tabindex", "-1");
+  target.focus({ preventScroll: true });
+}
+
 async function setArchived(name, archived) {
+  const index = rowIndex(name);
+  const hadFocus = qs("#rs-reports")?.contains(document.activeElement);
   try {
     await api(`${API}/reports/${encodeURIComponent(name)}/archive`, {
       method: "POST",
@@ -774,6 +915,7 @@ async function setArchived(name, archived) {
     if (button) button.outerHTML = archiveThisButton();
   } else {
     renderReportList();
+    if (hadFocus) focusRow(index);
   }
   window.Cloudline?.toast(archived ? "Guide archived." : "Guide moved back to active.");
 }
@@ -787,16 +929,15 @@ function archiveThisButton() {
 
 async function startRun({ topic = ui.mode === "question" ? "question" : ui.topic, query = ui.mode === "question" ? ui.question : ui.query,
   depth = ui.depth, provider = ui.provider, now = false } = {}) {
-  if (topic === "question" && query.trim().split(/\s+/).length < 3) {
-    ui.startError = "Type your question first: a few words at least.";
+  /* One request at a time: a second Enter or click while the first is on
+     its way would otherwise start (or queue) the same run twice. */
+  if (ui.starting) return;
+  const problem = Core.researchStartProblem({ mode: topic === "question" ? "question" : "guide", topic, query, question: query, provider });
+  if (problem) {
+    ui.startError = problem;
+    if (reportParam()) return goResearch(null); /* "Run again" on a guide: show why on the form */
     renderLaunch();
-    qs("#rs-question")?.focus();
-    return;
-  }
-  if (topic === "custom" && !query.trim()) {
-    ui.startError = "Type what to research first.";
-    renderLaunch();
-    qs("#rs-query")?.focus();
+    qs(topic === "question" ? "#rs-question" : "#rs-query")?.focus();
     return;
   }
   ui.starting = true;
@@ -904,9 +1045,9 @@ function startPolling() {
       renderJob();
       renderQueue();
       if (!job || job.status !== "running" || switched) {
-        renderLaunch();
+        if (launchKey() !== ui.launchKey) renderLaunch();
         renderPaused();
-        renderReportList();
+        if (ui.reportsDrawn !== ui.overview.reports) renderReportList();
       }
     }
   };

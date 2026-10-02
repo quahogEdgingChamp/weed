@@ -49,6 +49,7 @@ async function onClick(event) {
   }
   if (t.dataset.provider) {
     ui.provider = t.dataset.provider;
+    ui.lastWriter = t.dataset.provider;
     saveResearchPrefs();
     renderJob();
     renderPaused();
@@ -106,6 +107,11 @@ async function onClick(event) {
       ui.depth = ui.report.depth || "quick";
       return startRun({ topic: topic.key, query: topic.query || "", depth: ui.depth });
     }
+    case "clear-list-filters":
+      ui.listFilter = { writer: "", topic: "", depth: "" };
+      renderReportList();
+      qs("#rs-list-sort")?.focus();
+      return undefined;
     case "clear-filters":
       ui.filters = { ...ui.filters, q: "", tier: "", lean: "", plant: "", use: "", brand: "", terp: "", solo: false, online: false };
       drawCards();
@@ -186,21 +192,34 @@ function onInput(event) {
   /* Text fields react as you type. Their "change" on blur would redraw the
      cards under a click that is already in progress. */
   if (event.type === "change" && ["rs-q", "rs-bq", "rs-query", "rs-question", "rs-model-custom"].includes(t.id)) return undefined;
-  if (t.id === "rs-question") {
-    ui.question = t.value;
-    return;
+  if (t.id === "rs-question" || t.id === "rs-query") {
+    ui[t.id === "rs-question" ? "question" : "query"] = t.value;
+    ui.startError = "";
+    saveResearchPrefs();
+    return drawStartFoot();
   }
   if (t.name === "rs-topic") {
     ui.topic = t.value;
     ui.startError = "";
+    saveResearchPrefs();
     const query = qs(".rs-query");
     if (query) query.hidden = ui.topic !== "custom";
     if (ui.topic === "custom") qs("#rs-query")?.focus();
-    return;
+    return drawStartFoot();
   }
-  if (t.id === "rs-query") {
-    ui.query = t.value;
-    return;
+  if (t.id === "rs-counts") {
+    const providers = ui.overview?.providers || {};
+    ui.provider = t.checked
+      ? "none"
+      : [ui.lastWriter, ...WRITERS].find((p) => providers[p]?.available) || ui.lastWriter;
+    saveResearchPrefs();
+    renderJob();
+    renderPaused();
+    return renderLaunch();
+  }
+  if (t.id.startsWith("rs-lf-")) {
+    ui.listFilter[t.id.slice(6)] = t.value;
+    return renderReportList();
   }
   if (t.id === "rs-list-sort") {
     ui.listSort = t.value;
@@ -219,7 +238,7 @@ function onInput(event) {
   if (t.id === "rs-model-custom") {
     ui.choice[ui.provider].custom = t.value;
     saveResearchPrefs();
-    return undefined;
+    return drawStartFoot();
   }
   if (t.id === "rs-effort") {
     ui.choice[ui.provider].effort = t.value;

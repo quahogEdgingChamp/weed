@@ -233,3 +233,62 @@ test("duel: Elo moves more for new products and for upsets", () => {
   const sorted = Core.sortEntries([{ name: "x", duelRating: 1600, duelGames: 2 }, { name: "y" }, { name: "z", duelRating: 1450, duelGames: 1 }], "duel-desc");
   assert.deepEqual(sorted.map((e) => e.name), ["x", "z", "y"]);
 });
+
+test("each writer keeps its own model, and a model its CLI dropped falls back to the default", () => {
+  const codexList = { state: "ready", models: [{ id: "gpt-6-astra", label: "GPT-6 Astra", default: true, efforts: ["low", "medium", "high", "xhigh"] }] };
+  const claudeList = { state: "ready", models: [{ id: "claude-opus-5-5", label: "Opus", efforts: ["low", "high", "max"] }] };
+  // Switching from Codex to Claude reads Claude's own choice, never Codex's model.
+  const claude = Core.settleModelChoice({ model: "claude-opus-5-5", effort: "max" }, claudeList, "claude");
+  assert.equal(claude.choice.model, "claude-opus-5-5");
+  assert.equal(claude.choice.effort, "max");
+  // A Codex model id saved under Claude (or one the list no longer has) isn't sent.
+  const stale = Core.settleModelChoice({ model: "gpt-6-astra", effort: "xhigh" }, claudeList, "claude");
+  assert.equal(stale.choice.model, "");
+  assert.equal(stale.dropped, "gpt-6-astra");
+  // The default model can't do xhigh, so thinking falls back to Default.
+  assert.equal(stale.choice.effort, "");
+  // While the list loads, nothing is dropped yet.
+  assert.equal(Core.settleModelChoice({ model: "gpt-6-astra" }, { state: "loading", models: [] }, "codex").choice.model, "gpt-6-astra");
+  // A typed name is the user's own.
+  const typed = Core.settleModelChoice({ model: "__custom", custom: "gpt-7", effort: "max" }, codexList, "codex");
+  assert.deepEqual([typed.choice.model, typed.choice.custom, typed.choice.effort], ["__custom", "gpt-7", "max"]);
+  // Codex's default is the listed default, and its efforts apply.
+  const fallback = Core.settleModelChoice({ model: "", effort: "xhigh" }, codexList, "codex");
+  assert.equal(fallback.fallback.id, "gpt-6-astra");
+  assert.equal(fallback.choice.effort, "xhigh");
+});
+
+test("Start research waits for what it needs", () => {
+  assert.match(Core.researchStartProblem({ mode: "guide", topic: "custom", query: "  " }), /search for/);
+  assert.equal(Core.researchStartProblem({ mode: "guide", topic: "custom", query: "cold cure" }), "");
+  assert.equal(Core.researchStartProblem({ mode: "guide", topic: "live-carts", query: "" }), "");
+  assert.match(Core.researchStartProblem({ mode: "question", question: "is it good", provider: "none" }), /needs a writer/);
+  assert.match(Core.researchStartProblem({ mode: "question", question: "carts?", provider: "claude" }), /few words/);
+  assert.equal(Core.researchStartProblem({ mode: "question", question: "do carts help sleep", provider: "codex" }), "");
+});
+
+test("reading at medium only matters when the evidence is read in parts", () => {
+  const at = (extra) => Core.lightReadingApplies({ mode: "guide", depth: "quick", provider: "claude", effort: "xhigh", ...extra });
+  assert.equal(at({}), false); // one pass, all at xhigh
+  assert.equal(at({ depth: "deep" }), true);
+  assert.equal(at({ provider: "grok" }), true); // its prompt limit cuts every run into parts
+  assert.equal(at({ mode: "question" }), true); // plans its searches first
+  assert.equal(at({ depth: "deep", effort: "medium" }), false); // already medium
+});
+
+test("saved guides filter by writer, type and depth together", () => {
+  const reports = [
+    { name: "a", by: "claude", depth: "deep", topic: { label: "Hash & kief" } },
+    { name: "b", by: "codex", depth: "quick", topic: { label: "Hash & kief" } },
+    { name: "c", by: "counts", depth: "deep", topic: { label: "Dried flower" } },
+    { name: "d", depth: "quick", kind: "question", topic: { label: "Question" } },
+  ];
+  const facets = Core.reportFacets(reports);
+  assert.deepEqual(facets.writer.sort(), ["claude", "codex", "counts"]);
+  assert.deepEqual(facets.topic, ["Dried flower", "Hash & kief", "question"]);
+  const names = (f) => Core.filterReports(reports, f).map((r) => r.name);
+  assert.deepEqual(names({ writer: "counts" }), ["c", "d"]); // no writer recorded counts as counts
+  assert.deepEqual(names({ topic: "Hash & kief", depth: "deep" }), ["a"]);
+  assert.deepEqual(names({ topic: "question" }), ["d"]);
+  assert.deepEqual(names({ writer: "", topic: "", depth: "" }), ["a", "b", "c", "d"]);
+});

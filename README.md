@@ -85,9 +85,18 @@ dependencies.
   pauses, queues and continues like any other run
 - Pick who writes it: **Claude** (the `claude` CLI, your Claude Code plan),
   **Codex** (the `codex` CLI, your ChatGPT plan), **Grok** (the `grok` CLI,
-  Grok Build, your SuperGrok / X Premium+ plan) or counts only; pick the
-  model from the list the CLI itself reports, or type one, and a thinking
-  level from the ones that model supports. The choices are remembered
+  Grok Build, your SuperGrok / X Premium+ plan), or tick **Counts only** for
+  no model; pick the model from the list the CLI itself reports, or type
+  one, and a thinking level from the ones that model supports. Each writer
+  keeps its own model, and one the CLI stops listing falls back to its
+  default. "Read the evidence at medium thinking" only shows as live when
+  it has an effect (Deep, Grok, questions: the runs read in parts)
+- The form is numbered in the order to fill it (what, how deep, who,
+  model and thinking) and ends in a footer that sums up the run and how
+  long it takes; Start stays off until the form can run (an empty custom
+  search or question) and while a start is on its way, so a double click
+  never starts two runs. The whole form, custom search words included, is
+  remembered in this browser
 - The server reads every post in r/TheOCS and r/CanadianCannabisLPs for that
   window, picks the relevant threads, reads their comments, and lines brands
   up against the full OCS catalog; a progress panel shows each stage
@@ -150,7 +159,8 @@ dependencies.
   repeated progress lines and marks problems (failed, timed out, limit…)
 - Guides are saved and can be reopened, re-run, archived or deleted; the
   list sorts by date, who wrote it, depth, topic, comments read or product
-  count, with separate Active and Archived views. "Who wrote it" groups
+  count, with separate Active and Archived views, and filters by writer,
+  type and depth (shown when the guides differ in them). "Who wrote it" groups
   guides under Claude, Codex, Grok and counts-only, one heading per model
   (the one used most recently first), deepest and highest thinking level
   first inside each; "Deepest first" and "Topic" get headings too, and a

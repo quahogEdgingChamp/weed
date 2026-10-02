@@ -77,18 +77,27 @@ const ui = {
   lastJobId: null,
   listView: "active",
   listSort: "newest",
+  listFilter: { writer: "", topic: "", depth: "" },
+  /* The writer to go back to when "Counts only" is unticked. */
+  lastWriter: "claude",
 };
 
 const RESEARCH_PREFS_KEY = "cloudline-research-v1";
 const WRITERS = ["claude", "codex", "grok"];
 const PROVIDER_LABEL = { claude: "Claude", codex: "Codex", grok: "Grok", none: "Counts only" };
 
-/* The last provider, model, thinking level and depth, per browser. */
+/* The last form, per browser: what to research, provider, model, thinking
+   level and depth. Read once at load, so it never overwrites a form being
+   edited. */
 function loadResearchPrefs() {
   try {
     const saved = JSON.parse(window.localStorage.getItem(RESEARCH_PREFS_KEY) || "null");
     if (saved && typeof saved === "object") {
       if ([...WRITERS, "none"].includes(saved.provider)) ui.provider = saved.provider;
+      if (WRITERS.includes(saved.lastWriter)) ui.lastWriter = saved.lastWriter;
+      if (typeof saved.topic === "string" && saved.topic) ui.topic = saved.topic;
+      if (typeof saved.query === "string") ui.query = saved.query.slice(0, 120);
+      if (typeof saved.question === "string") ui.question = saved.question.slice(0, 300);
       if (["quick", "standard", "deep"].includes(saved.depth)) ui.depth = saved.depth;
       if (typeof saved.listSort === "string") ui.listSort = saved.listSort;
       if (typeof saved.lightReading === "boolean") ui.lightReading = saved.lightReading;
@@ -108,7 +117,8 @@ function loadResearchPrefs() {
 
 function saveResearchPrefs() {
   try {
-    window.localStorage.setItem(RESEARCH_PREFS_KEY, JSON.stringify({ provider: ui.provider, depth: ui.depth, choice: ui.choice, listSort: ui.listSort, lightReading: ui.lightReading, autoContinue: ui.autoContinue, mode: ui.mode }));
+    window.localStorage.setItem(RESEARCH_PREFS_KEY, JSON.stringify({ provider: ui.provider, lastWriter: ui.lastWriter,
+      topic: ui.topic, query: ui.query, question: ui.question, depth: ui.depth, choice: ui.choice, listSort: ui.listSort, lightReading: ui.lightReading, autoContinue: ui.autoContinue, mode: ui.mode }));
   } catch (error) {
     /* Not remembered; nothing else depends on it. */
   }
@@ -122,6 +132,35 @@ const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;
 const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (c) => ESC[c]);
 const qs = (selector, scope = researchRoot) => scope.querySelector(selector);
 const qsa = (selector, scope = researchRoot) => Array.from(scope.querySelectorAll(selector));
+
+/* Redrawing a box replaces the control under the keyboard. Put focus (and
+   a text field's caret) back on its replacement, so a click on "Deep" or a
+   poll while typing doesn't throw the user back to the top of the page. */
+function rsFocusKey(el) {
+  if (el.id) return `#${CSS.escape(el.id)}`;
+  for (const attr of ["data-mode", "data-depth", "data-provider", "data-list", "data-act"]) {
+    if (el.hasAttribute(attr)) return `[${attr}="${CSS.escape(el.getAttribute(attr))}"]`;
+  }
+  if (el.name) return `[name="${CSS.escape(el.name)}"][value="${CSS.escape(el.value)}"]`;
+  return "";
+}
+
+function redrawKeepingFocus(box, draw) {
+  const el = document.activeElement;
+  const key = box && el && box.contains(el) ? rsFocusKey(el) : "";
+  const caret = key && typeof el.selectionStart === "number" ? [el.selectionStart, el.selectionEnd] : null;
+  draw();
+  const again = key ? box.querySelector(key) : null;
+  if (!again) return;
+  again.focus({ preventScroll: true });
+  if (caret) {
+    try {
+      again.setSelectionRange(...caret);
+    } catch (error) {
+      /* not a text field after all */
+    }
+  }
+}
 
 function money(value) {
   return typeof value === "number" ? `$${value.toFixed(2)}` : "—";

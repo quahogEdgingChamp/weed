@@ -1202,6 +1202,80 @@
     );
   }
 
+  /* ── Research launcher ────────────────────────────────────────────────
+
+     The rules behind the "New research" form, kept out of the page so they
+     can be tested: which model and thinking level stay valid for a writer,
+     what stops a run starting, and when reading at lighter thinking has
+     any effect. */
+
+  const ALL_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+  const HEAVY_EFFORTS = ["high", "xhigh", "max", "ultra"];
+
+  /* A writer's saved {model, effort, custom} against the models its CLI
+     lists ({state, models}). A model the list no longer has falls back to
+     the CLI default (and says so) rather than being sent anyway; a typed
+     ("Other") name is the user's own and is kept. The thinking level falls
+     back to Default when the model can't do it. */
+  function settleModelChoice(choice, entry, provider) {
+    const c = { model: "", effort: "", custom: "", ...(choice || {}) };
+    const models = (entry && entry.models) || [];
+    const ready = Boolean(entry && entry.state === "ready");
+    let dropped = "";
+    if (c.model && c.model !== "__custom" && ready && !models.some((m) => m.id === c.model)) {
+      dropped = c.model;
+      c.model = "";
+    }
+    const chosen = models.find((m) => m.id === c.model);
+    const fallback = provider === "claude" ? models[0] : models.find((m) => m.default) || models[0];
+    const efforts = chosen
+      ? chosen.efforts || []
+      : c.model === "__custom" || !models.length
+        ? ALL_EFFORTS
+        : (fallback && fallback.efforts) || [];
+    if (c.effort && !efforts.includes(c.effort)) c.effort = "";
+    return { choice: c, chosen: chosen || null, fallback: fallback || null, efforts, dropped };
+  }
+
+  /* Why "Start research" can't go yet, or "" when it can. */
+  function researchStartProblem({ mode, topic, query, question, provider }) {
+    if (mode === "question") {
+      if (String(question || "").trim().split(/\s+/).filter(Boolean).length < 3) return "Type your question first: a few words at least.";
+      if (!provider || provider === "none") return "A question needs a writer: pick Claude, Codex or Grok.";
+      return "";
+    }
+    if (topic === "custom" && !String(query || "").trim()) return "Type what to search for first.";
+    return "";
+  }
+
+  /* Reading at medium thinking only changes anything when the evidence is
+     read in parts: Deep runs, Grok (whose prompt limit cuts every run into
+     parts), and questions (which plan their searches first). */
+  function lightReadingApplies({ mode, depth, provider, effort }) {
+    if (!HEAVY_EFFORTS.includes(effort)) return false;
+    return mode === "question" || depth === "deep" || provider === "grok";
+  }
+
+  /* Saved guides: which writers, topics and depths a list has, and the
+     guides matching the picked ones ("" matches all). */
+  const reportWriter = (r) => (!r.by || r.by === "counts" ? "counts" : r.by);
+  const reportTopic = (r) => (r.kind === "question" ? "question" : (r.topic && r.topic.label) || "Research");
+
+  function reportFacets(reports) {
+    const facet = (key) => [...new Set((reports || []).map(key).filter(Boolean))];
+    return { writer: facet(reportWriter), topic: facet(reportTopic).sort(), depth: facet((r) => r.depth) };
+  }
+
+  function filterReports(reports, filters) {
+    const f = filters || {};
+    return (reports || []).filter(
+      (r) =>
+        (!f.writer || reportWriter(r) === f.writer) &&
+        (!f.topic || reportTopic(r) === f.topic) &&
+        (!f.depth || r.depth === f.depth)
+    );
+  }
+
   /* ── Research run log ─────────────────────────────────────────────────
 
      A run's log, made readable: lines grouped by step, a run of progress
@@ -1356,6 +1430,13 @@
     terpeneInfo,
     awaitingRating,
     foldLog,
+    settleModelChoice,
+    researchStartProblem,
+    lightReadingApplies,
+    reportWriter,
+    reportTopic,
+    reportFacets,
+    filterReports,
     DUEL_START,
     duelKey,
     duelStandings,
