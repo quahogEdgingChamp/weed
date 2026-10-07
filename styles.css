@@ -6448,3 +6448,38 @@ p.rs-solo {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* ── Phone fixes: long names, sideways tables, the tab strip ───────────── */
+
+/* A name with no spaces (a pasted link, say) wraps instead of widening the
+   page. Only on the collection cards: in a table "anywhere" would let the
+   name column shrink and break ordinary words. */
+#entries-body .name-link,
+.toast {
+  overflow-wrap: anywhere;
+}
+
+/* A table wider than its card scrolls sideways; a shadow on the cut edge says
+   so. The surface-coloured covers scroll with the content and hide each
+   shadow once that edge is reached. */
+.insight-table {
+  background:
+    linear-gradient(to right, var(--surface) 30%, transparent) left / 32px 100% no-repeat local,
+    linear-gradient(to left, var(--surface) 30%, transparent) right / 32px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgb(0 0 0 / 0.28), transparent) left / 12px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgb(0 0 0 / 0.28), transparent) right / 12px 100% no-repeat scroll;
+}
+
+@media (max-width: 520px) {
+  /* Four columns fit a phone without scrolling. */
+  .mini-table th,
+  .mini-table td {
+    padding: 8px 6px;
+  }
+
+  /* The tab strip scrolls: fade its end so the tabs past the edge read as more. */
+  .tabs {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
+}
