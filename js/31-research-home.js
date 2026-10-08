@@ -80,7 +80,7 @@ function launchKey() {
   return [o.job?.status === "running", JSON.stringify(o.queue?.limited || {}), available.join(","), ui.overviewError].join("|");
 }
 
-const STEP = (n) => `<span class="rs-num" aria-hidden="true">${n}</span>`;
+const STEP = (n) => `<span class="rs-order" aria-hidden="true">${n}</span>`;
 
 /* How far each depth goes, as short facts rather than a paragraph. */
 function depthFacts(o, asking) {
