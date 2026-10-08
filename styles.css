@@ -5839,25 +5839,73 @@ p.rs-solo {
   font-size: 0.98rem;
 }
 
+/* Name, sparkline, count, caption. The columns live on the list and each row
+   borrows them (subgrid), so every count sits at the same x. The caption is
+   the only column allowed to shrink; it switches to "of 159 · 90d" when the
+   card is narrow and ellipsizes past that. */
+.rs-movers-card {
+  container-type: inline-size;
+}
+
 .rs-movers {
   display: grid;
-  gap: var(--s-2);
+  grid-template-columns: minmax(3.5rem, max-content) 84px max-content minmax(5.5rem, 1fr);
+  gap: var(--s-2) var(--s-3);
 }
 
 .rs-movers li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 84px auto;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: var(--s-3);
   font-size: 0.84rem;
 }
 
 .rs-mover-name {
   justify-self: start;
-  max-width: 100%;
+  max-width: min(100%, 11rem);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.rs-mover-count {
+  justify-self: end;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.rs-mover-of {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rs-of-short {
+  display: none;
+}
+
+@container (max-width: 34rem) {
+  .rs-of-long {
+    display: none;
+  }
+
+  .rs-of-short {
+    display: inline;
+  }
+}
+
+@container (max-width: 19rem) {
+  .rs-movers {
+    grid-template-columns: minmax(3.5rem, max-content) max-content minmax(5.5rem, 1fr);
+  }
+
+  .rs-movers .rs-spark,
+  .rs-movers li > span:empty {
+    display: none;
+  }
 }
 
 .rs-new-list {
@@ -5983,14 +6031,6 @@ p.rs-solo {
 }
 
 @media (max-width: 720px) {
-  .rs-movers li {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .rs-movers .rs-spark {
-    display: none;
-  }
-
   .rs-fe div,
   .rs-details div {
     grid-template-columns: 1fr;

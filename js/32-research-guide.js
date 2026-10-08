@@ -340,9 +340,10 @@ function moversPanel(r) {
     items.length
       ? `<ul class="rs-movers">${items
           .map(
-            (b) => `<li><button type="button" class="rs-mover-name" data-brand-filter="${esc(b.brand)}">${esc(b.brand)}</button>
-              ${sparkline(b.months)}
-              <span class="rs-num">${num(b.recent)} <span class="rs-hint">of ${num(b.mentions)} mentions in the last 90 days</span></span></li>`
+            (b) => `<li><button type="button" class="rs-mover-name" data-brand-filter="${esc(b.brand)}" title="${esc(b.brand)}">${esc(b.brand)}</button>
+              ${sparkline(b.months) || "<span></span>"}
+              <span class="rs-mover-count">${num(b.recent)}</span>
+              <span class="rs-mover-of" title="${num(b.recent)} of ${num(b.mentions)} mentions in the last 90 days"><span class="rs-of-long">of ${num(b.mentions)} mentions in the last 90 days</span><span class="rs-of-short">of ${num(b.mentions)} · 90d</span></span></li>`
           )
           .join("")}</ul>`
       : `<p class="rs-hint">${empty}</p>`;
