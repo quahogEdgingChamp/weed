@@ -11,6 +11,11 @@
 "use strict";
 
 const API = "/api/research";
+/* The public copy on GitHub Pages has no serve.py. There the guides come
+   from the snapshot publish_research.py writes into published/research/,
+   and everything that starts, archives or deletes a run is hidden. */
+const READ_ONLY = window.location.hostname.endsWith(".github.io");
+const PUBLISHED = "published/research";
 const RESEARCH_POLL_MS = 1500;
 const researchRoot = document.getElementById("research-root");
 
@@ -280,7 +285,20 @@ function trendChip(direction) {
   return `<span class="rs-trend rs-trend-${esc(direction)}"><span aria-hidden="true">${icon}</span> ${label}</span>`;
 }
 
+function publishedPath(path) {
+  if (path === API) return `${PUBLISHED}/index.json`;
+  if (path.startsWith(`${API}/reports/`) && !path.endsWith("/archive")) {
+    return `${PUBLISHED}/reports/${path.slice(API.length + "/reports/".length)}`;
+  }
+  return null;
+}
+
 async function api(path, options = {}) {
+  if (READ_ONLY) {
+    const file = (options.method || "GET") === "GET" ? publishedPath(path) : null;
+    if (!file) throw new Error("This is a read-only copy of the guides.");
+    path = file;
+  }
   let response;
   try {
     response = await fetch(path, {

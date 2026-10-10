@@ -296,6 +296,17 @@ run that was going (so a restart continues it). It's gitignored. Starting or
 queueing a run is refused for cross-site requests, since it spends Claude
 usage; so is saving the collection.
 
+### The public copy
+
+GitHub Pages serves this repo at https://quahogedgingchamp.github.io/weed/.
+There is no `serve.py` there, so the collection starts empty and lives only
+in that visitor's browser, and the Research tab reads a snapshot instead of
+`/api/research`: `python3 publish_research.py` copies every guide in
+`research/reports/` into `published/research/` (plus an `index.json` shaped
+like the overview). On a `*.github.io` host the tab is read-only: no
+launcher, no archive, delete or run-again buttons. After a new guide, run the
+script, commit `published/` and push.
+
 ## Data file
 
 - `weed_chart.json` holds `products`, `wishlist`, `experiences`, `trash` and
@@ -349,4 +360,5 @@ declared twice. A new script needs a line in both.
 | `ask.py` | Free questions: the plan, the searches, the answer's prompts and file |
 | `llm.py` | Claude / Codex / Grok CLI calls with a JSON schema, and their model lists |
 | `serve.py` | Static files, `/api/state`, `/api/snapshots`, `/api/lookup`, `/api/hibuddy`, `/api/research…` |
+| `publish_research.py`, `published/` | The guides, copied for the read-only public copy |
 | `tests/` | Server, core and browser tests |

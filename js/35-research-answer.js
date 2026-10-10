@@ -62,12 +62,12 @@ function drawAnswer() {
         <button class="btn btn-ghost btn-small rs-back" type="button" data-home>← All research</button>
         <div class="rs-report-actions">
           ${archiveThisButton()}
-          <button class="btn btn-secondary btn-small" type="button" data-act="rerun">
+          ${READ_ONLY ? "" : `<button class="btn btn-secondary btn-small" type="button" data-act="rerun">
             <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg> Ask again
           </button>
           <button class="btn btn-ghost btn-small" type="button" data-delete="${esc(ui.reportName)}">
             <svg class="icon" aria-hidden="true"><use href="#i-trash" /></svg><span class="sr-only">Delete this answer</span>
-          </button>
+          </button>`}
         </div>
       </div>
 

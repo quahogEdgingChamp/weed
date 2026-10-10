@@ -131,6 +131,11 @@ function renderLaunch() {
       <button class="btn btn-secondary" type="button" data-act="reload">Try again</button></section>`;
     return;
   }
+  if (READ_ONLY) {
+    box.innerHTML = `<p class="rs-hint">A read-only copy: these guides were written elsewhere and can be read and
+      filtered here, but no new runs start from this page.</p>`;
+    return;
+  }
   const o = ui.overview;
   const providers = o.providers || {};
   const asking = ui.mode === "question";
@@ -865,7 +870,7 @@ function reportItem(r) {
       }</span>
       <svg class="icon rs-open-cue" aria-hidden="true"><use href="#i-chevron" /></svg>
     </button>
-    <div class="rs-item-actions">
+    ${READ_ONLY ? "" : `<div class="rs-item-actions">
       <button class="btn btn-ghost btn-small" type="button" data-archive="${esc(r.name)}" data-to="${r.archived ? "false" : "true"}"
         title="${r.archived ? "Move back to active" : "Archive"}" aria-label="${r.archived ? "Unarchive" : "Archive"} ${title}">
         <svg class="icon" aria-hidden="true"><use href="#i-archive" /></svg><span class="rs-item-label">${r.archived ? "Unarchive" : "Archive"}</span>
@@ -873,7 +878,7 @@ function reportItem(r) {
       <button class="btn btn-ghost btn-small rs-report-delete" type="button" data-delete="${esc(r.name)}" title="Delete" aria-label="Delete ${title}">
         <svg class="icon" aria-hidden="true"><use href="#i-trash" /></svg>
       </button>
-    </div>
+    </div>`}
   </li>`;
 }
 
@@ -921,6 +926,7 @@ async function setArchived(name, archived) {
 }
 
 function archiveThisButton() {
+  if (READ_ONLY) return "";
   const archived = Boolean(ui.report?.archived);
   return `<button class="btn btn-secondary btn-small" type="button" data-act="archive-this">
     <svg class="icon" aria-hidden="true"><use href="#i-archive" /></svg> ${archived ? "Unarchive" : "Archive"}
