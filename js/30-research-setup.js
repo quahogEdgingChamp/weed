@@ -13,8 +13,10 @@
 const API = "/api/research";
 /* The public copy on GitHub Pages has no serve.py. There the guides come
    from the snapshot publish_research.py writes into published/research/,
-   and everything that starts, archives or deletes a run is hidden. */
-const READ_ONLY = window.location.hostname.endsWith(".github.io");
+   and everything that starts, archives or deletes a run is hidden. Any other
+   host without the server switches over too, the first time /api/research
+   isn't there but the snapshot is (see api). */
+let READ_ONLY = window.location.hostname.endsWith(".github.io");
 const PUBLISHED = "published/research";
 const RESEARCH_POLL_MS = 1500;
 const researchRoot = document.getElementById("research-root");
@@ -293,12 +295,7 @@ function publishedPath(path) {
   return null;
 }
 
-async function api(path, options = {}) {
-  if (READ_ONLY) {
-    const file = (options.method || "GET") === "GET" ? publishedPath(path) : null;
-    if (!file) throw new Error("This is a read-only copy of the guides.");
-    path = file;
-  }
+async function fetchJson(path, options = {}) {
   let response;
   try {
     response = await fetch(path, {
@@ -307,15 +304,36 @@ async function api(path, options = {}) {
       ...options,
     });
   } catch (error) {
-    throw new Error("Could not reach the server. Research needs python3 serve.py running.");
+    const offline = new Error("Could not reach the server. Research needs python3 serve.py running.");
+    offline.offline = true;
+    throw offline;
   }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(payload.error || `The server answered ${response.status}.`);
     error.payload = payload;
+    error.status = response.status;
     throw error;
   }
   return payload;
+}
+
+async function api(path, options = {}) {
+  const published = (options.method || "GET") === "GET" ? publishedPath(path) : null;
+  if (READ_ONLY) {
+    if (!published) throw new Error("This is a read-only copy of the guides.");
+    return fetchJson(published, options);
+  }
+  try {
+    return await fetchJson(path, options);
+  } catch (error) {
+    /* No serve.py behind this page: read the published snapshot, if there is one. */
+    if (!published || !(error.offline || error.status === 404)) throw error;
+    const payload = await fetchJson(published, options).catch(() => null);
+    if (!payload) throw error;
+    READ_ONLY = true;
+    return payload;
+  }
 }
 
 function reportParam() {
