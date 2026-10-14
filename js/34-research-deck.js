@@ -56,8 +56,10 @@ function deckQueue() {
 function deckCard(p) {
   const o = p.ocs;
   const quote = (p.quotes || [])[0];
+  const store = storeRange(p);
   const facts = [
     o?.price != null ? `${money(o.price)}${o.size ? ` · ${o.size}` : ""}` : "",
+    store ? `Stores ${rangeText(store)}${store.size === p.hibuddy.size ? "" : ` · ${store.size}`}` : "",
     o ? thcText(o) + " THC" : "",
     p.strength && p.strength !== "unknown" ? p.strength : "",
   ].filter(Boolean);

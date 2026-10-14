@@ -243,19 +243,42 @@ in the notes as a store estimate.
 Edibles are dosed in milligrams, so their percentage tags are a flat zero —
 those are left blank rather than recorded as "0% THC".
 
-## How the hibuddy price links work
+## How the hibuddy price links and store prices work
 
 Every collection row, shopping-list item, detail panel and research card has
 a price-tag link to the product's own page on [hibuddy.ca](https://hibuddy.ca),
 which compares store prices. hibuddy addresses products by an opaque id
 (`/product/ef5b560e…`), so the link can't be built from the name. Instead it
 points at `/api/hibuddy?name=&brand=&type=`, and only when it is opened does
-`hibuddy.py` ask hibuddy's own search box endpoint
-(`/api/search-suggest?q=<brand> <name>`) and pick the suggestion that is this
-product: same brand, every distinctive word of the name, the right category,
-and a cart kept apart from the same strain's all-in-one pen. The server then
-redirects there, or to a hibuddy search (`/products/search?q=`) when nothing fits. Answers are cached
-in memory for a day.
+`hibuddy.py` read hibuddy's search page (`/products/search?q=<brand> <name>`)
+and pick the hit that is this product: same brand, every distinctive word of
+the name, the right category (a cart is never the same strain's pre-roll), a
+cart kept apart from the same strain's all-in-one pen, and a live resin cart
+kept apart from the same strain's distillate cart. The server then redirects
+there, or to the hibuddy search when nothing fits. Answers are cached in
+memory for a day.
+
+Research guides also carry **store prices**. Once a guide is saved,
+`research.py` looks up each product (by its OCS listing first, the exact item
+and size the guide prices) and reads its hibuddy page, which lists the stores
+near a point with each one's price for every size. Each product gets
+`hibuddy: {url, size, sizes: [{size, low, high, stores}], checked}` and the
+guide a `storePrices` summary. The card shows the range for the size OCS
+sells beside its Store prices button; the compare table and the Sort-through
+deck show it too. A range is the cheapest and dearest store **today**:
+hibuddy keeps no price history on the page.
+
+- **Where:** stores near downtown Toronto (`NEAR` in `hibuddy.py`, hibuddy's
+  own default). The page lists at most 200 offers, nearest first, so in the
+  city that's the few km around the point.
+- **Gently:** one hibuddy page every 2.5 s (`REQUEST_GAP`). hibuddy shows a
+  client that asks much faster "Product temporarily unavailable" for a while;
+  when that happens nothing asks again for 15 min (`REST_SECONDS`), and a run
+  keeps the products it had already checked. Only ordinary pages are read:
+  hibuddy's `robots.txt` keeps scripts out of `/api/`.
+- **Refresh** any saved guide's prices from the shell:
+  `python3 research.py --store-prices` (all) or `--store-prices <report>.json`.
+  A guide of ~45 products takes a few minutes.
 
 ## How research works
 
@@ -271,6 +294,7 @@ python3 research.py hash --depth deep --provider codex --model gpt-6-sol --effor
 python3 research.py rosin --provider grok --model grok-4.7 --effort high
 python3 research.py --resume hash-20260924T182347Z --provider claude   # continue a paused run
 python3 research.py question --query "does a grinder card beat a grinder?" --provider codex
+python3 research.py --store-prices                                 # re-check every saved guide's store prices
 ```
 
 | Stage | Source | Notes |
@@ -281,6 +305,7 @@ python3 research.py question --query "does a grinder card beat a grinder?" --pro
 | Brand search (deep) | the archive's full-text comment search, for the category's 12 most-discussed brands | best effort; busy names can time out |
 | Parse | brand mentions (from OCS vendor names), month counts, keyword tone | |
 | Write | `claude -p --json-schema`, `codex exec --output-schema` or `grok --json-schema`, no tools (`llm.py`) | quick 1–5 min; deep 20–45 min |
+| Store prices | each product's hibuddy page, after the guide is saved (see above) | a few min; best effort |
 
 Prices, sizes, potency and links on the guide always come from the OCS
 catalog; the model only supplies a catalog reference. Reddit's own JSON API
@@ -355,7 +380,7 @@ declared twice. A new script needs a line in both.
 | `js/30-research-*.js` … | The Research tab: setup, home (launcher, progress, queue), guide, products, terpenes, answer (a question's page), events |
 | `fonts/` | Bricolage Grotesque (headings), self-hosted, SIL OFL |
 | `ocs.py` | Turns an ocs.ca link into fields |
-| `hibuddy.py` | Finds a product's hibuddy.ca page for the price links |
+| `hibuddy.py` | Finds a product's hibuddy.ca page for the price links, and reads its store prices |
 | `research.py` | Reddit + OCS research runs, the guide writer, the run queue |
 | `ask.py` | Free questions: the plan, the searches, the answer's prompts and file |
 | `llm.py` | Claude / Codex / Grok CLI calls with a JSON schema, and their model lists |

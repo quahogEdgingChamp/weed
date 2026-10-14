@@ -22,6 +22,14 @@ import research  # noqa: E402
 import serve  # noqa: E402
 
 
+def setUpModule() -> None:
+    # Offline: hibuddy never answers here, so a finished guide is saved without
+    # store prices. StorePricesTest stands in for hibuddy itself.
+    patcher = mock.patch.object(research.hibuddy, "fetch_page", side_effect=research.hibuddy.Unavailable("offline"))
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+
+
 def product(handle="x", title="Thing", vendor="Brand", tags=(), price="39.95", size="1g", available=True):
     return {
         "handle": handle,
@@ -604,6 +612,136 @@ class ReportListTest(unittest.TestCase):
         counts = rows["hash-20260102T000000Z.json"]
         # A counts-only guide didn't think at any level, whatever was picked.
         self.assertEqual((counts["by"], counts["effort"], counts["readers"]), ("counts", None, None))
+
+
+HIBUDDY_A = "https://hibuddy.ca/product/" + "a" * 32
+HIBUDDY_B = "https://hibuddy.ca/product/" + "b" * 32
+ORANGEADE = {"id": "orangeade", "brand": "Purple Hills", "name": "Orangeade (and Grape, Lime)",
+             "ocs": {"title": "Orangeade Live Resin 510 Thread Cartridge", "brand": "Purple Hills", "size": "1g",
+                     "category": "Vapes", "subcategory": "510 Thread Cartridges"}}
+GHOST = {"id": "ghost", "brand": "Ghost", "name": "Ghost Cart (Lemon / Lime)", "ocs": None}
+NOWHERE = {"id": "nowhere", "brand": "Nobody", "name": "Imaginary Cart", "ocs": None}
+RANGES = {HIBUDDY_A: [{"size": "0.5g", "low": 25.0, "high": 30.0, "stores": 4},
+                      {"size": "1g", "low": 39.99, "high": 54.99, "stores": 12}],
+          HIBUDDY_B: []}
+
+
+class StorePricesTest(unittest.TestCase):
+    """research.add_store_prices, with hibuddy.lookup and store_prices standing in for hibuddy."""
+
+    NAME = "live-carts-20260101T000000Z.json"
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = Path(self.tmp.name)
+        (self.out / "reports").mkdir()
+        self.log: list[str] = []
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def plant(self, products, **fields) -> None:
+        document = {"topic": {"key": "live-carts", "label": "Carts"}, "guide": {"headline": "H", "products": products},
+                    **fields}
+        (self.out / "reports" / self.NAME).write_text(json.dumps(document))
+
+    def saved(self) -> dict:
+        return json.loads((self.out / "reports" / self.NAME).read_text())
+
+    def check(self, lookup, cancel=None):
+        with mock.patch.object(research.hibuddy, "lookup", side_effect=lookup) as look, \
+                mock.patch.object(research.hibuddy, "store_prices", side_effect=lambda url: RANGES[url]):
+            summary = research.add_store_prices(self.out, self.NAME, self.log.append, cancel)
+        return summary, look
+
+    def test_each_product_gets_its_store_prices_and_the_report_a_summary(self) -> None:
+        self.plant([ORANGEADE, GHOST, NOWHERE])
+        urls = {"Orangeade Live Resin 510 Thread Cartridge": HIBUDDY_A, "Ghost Cart": HIBUDDY_B}
+        summary, look = self.check(lambda name, brand, kind: urls.get(name))
+        products = {p["id"]: p["hibuddy"] for p in self.saved()["guide"]["products"]}
+        self.assertEqual((products["orangeade"]["url"], products["orangeade"]["size"]), (HIBUDDY_A, "1g"))
+        self.assertEqual(products["orangeade"]["sizes"], RANGES[HIBUDDY_A])
+        self.assertEqual((products["ghost"]["url"], products["ghost"]["size"], products["ghost"]["sizes"]), (HIBUDDY_B, None, []))
+        self.assertIsNone(products["nowhere"]["url"])
+        self.assertTrue(products["nowhere"]["checked"])
+        self.assertEqual({k: summary[k] for k in ("source", "near", "products", "found", "priced")},
+                         {"source": "hibuddy.ca", "near": "Toronto", "products": 3, "found": 2, "priced": 1})
+        self.assertEqual(self.saved()["storePrices"], summary)
+        # The OCS listing first, as a cart; then the guide's own name without its flavours.
+        self.assertEqual(look.call_args_list[0], mock.call("Orangeade Live Resin 510 Thread Cartridge", "Purple Hills", "cart"))
+        self.assertIn(mock.call("Ghost Cart", "Ghost", "cart"), look.call_args_list)
+
+    def test_hibuddy_turning_us_away_stops_the_check_and_keeps_what_was_read(self) -> None:
+        old = {"url": HIBUDDY_B, "size": None, "sizes": [], "checked": "2026-01-01T00:00:00Z"}
+        others = [{"id": f"p{n}", "brand": "B", "name": f"Cart {n}", "ocs": None} for n in range(2, 6)]
+        others[0]["hibuddy"] = old
+        self.plant([GHOST, *others])
+
+        def lookup(name, brand, kind):
+            if name == "Ghost Cart":
+                return HIBUDDY_B
+            raise research.hibuddy.Unavailable("Product temporarily unavailable")
+
+        summary, look = self.check(lookup)
+        self.assertEqual(look.call_count, 1 + research.STORE_GIVE_UP)  # the last product is never asked about
+        products = {p["id"]: p for p in self.saved()["guide"]["products"]}
+        self.assertEqual(products["ghost"]["hibuddy"]["url"], HIBUDDY_B)
+        self.assertEqual(products["p2"]["hibuddy"], old)  # not checked this time: kept as it was
+        self.assertNotIn("hibuddy", products["p5"])
+        self.assertEqual(summary["products"], 5)
+        self.assertTrue(any("stopped answering" in line for line in self.log))
+
+    def test_nothing_checked_leaves_the_report_alone(self) -> None:
+        self.plant([ORANGEADE, GHOST])
+        before = (self.out / "reports" / self.NAME).read_text()
+
+        def unavailable(*args):
+            raise research.hibuddy.Unavailable("down")
+
+        self.assertIsNone(self.check(unavailable)[0])
+        stop = threading.Event()
+        stop.set()
+        summary, look = self.check(lambda *args: HIBUDDY_A, cancel=stop)
+        self.assertIsNone(summary)
+        look.assert_not_called()
+        self.assertEqual((self.out / "reports" / self.NAME).read_text(), before)
+
+    def test_archiving_while_prices_are_checked_is_kept(self) -> None:
+        self.plant([ORANGEADE])
+
+        def lookup(*args):
+            research.set_archived(self.out, self.NAME, True)
+            return HIBUDDY_A
+
+        self.check(lookup)
+        saved = self.saved()
+        self.assertTrue(saved["archived"])
+        self.assertEqual(saved["guide"]["products"][0]["hibuddy"]["url"], HIBUDDY_A)
+
+    def test_an_answer_only_prices_the_products_matched_to_ocs(self) -> None:
+        self.plant([ORANGEADE, GHOST], kind="question")
+        summary, look = self.check(lambda *args: HIBUDDY_A)
+        self.assertEqual(look.call_count, 1)
+        self.assertEqual(summary["products"], 1)
+        self.assertNotIn("hibuddy", self.saved()["guide"]["products"][1])
+
+    def test_a_finished_guide_is_saved_first_and_kept_if_store_prices_fail(self) -> None:
+        import llm
+
+        def ask(provider, *, prompt, schema, **_):
+            return {"data": json.loads(json.dumps(GUIDE)), "model": "m", "cost": 0.1,
+                    "tokens": {"input": 1, "output": 1}, "seconds": 1}
+
+        def broken(out_dir, name, log, cancel):
+            self.assertTrue((out_dir / "reports" / name).exists())
+            raise RuntimeError("a bug")
+
+        messages: list[str] = []
+        with mock.patch.object(llm, "ask", ask), mock.patch.object(research, "add_store_prices", side_effect=broken):
+            path = research.write(fake_state(), provider="claude", out_dir=self.out,
+                                  progress=lambda stage, message, **counts: messages.append(message))
+        self.assertTrue(path.exists())
+        self.assertTrue(any(m.startswith("Store prices were skipped") for m in messages))
 
 
 class ServerResearchTest(unittest.TestCase):

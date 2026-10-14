@@ -24,16 +24,27 @@ import test_ask  # noqa: E402
 from test_research import GUIDE, fake_state  # noqa: E402
 
 
+STORE_PAGE = "https://hibuddy.ca/product/" + "e" * 32
+STORE_SIZES = [{"size": "1g", "low": 41.5, "high": 52.0, "stores": 7}, {"size": "2g", "low": 70.0, "high": 84.99, "stores": 3}]
+
+
 def ask_guide(provider, *, prompt, schema, **_):
     return {"data": json.loads(json.dumps(GUIDE)), "model": f"{provider}-model", "cost": 0.1,
             "tokens": {"input": 10, "output": 2}, "seconds": 1}
+
+
+def offline(*args, **kwargs):
+    raise research.hibuddy.Unavailable("offline")
 
 
 def main() -> None:
     out = Path(sys.argv[1])
     state = fake_state()
     state["id"] = "hash-20260102T000000Z"  # apart from the paused run e2e.js plants
-    with mock.patch.object(llm, "ask", ask_guide):
+    # hibuddy "has" the guide's product, at STORE_SIZES near Toronto.
+    with mock.patch.object(llm, "ask", ask_guide), \
+            mock.patch.object(research.hibuddy, "lookup", return_value=STORE_PAGE), \
+            mock.patch.object(research.hibuddy, "store_prices", return_value=STORE_SIZES):
         path = research.write(state, provider="codex", out_dir=out, progress=lambda *args, **counts: None)
     print(path.name)
 
@@ -51,6 +62,7 @@ def main() -> None:
     comment = {"id": "c1", "body": "I forget everything I study high, honestly every time", "score": 5, "author": "u",
                "created_utc": 1_780_000_100, "parent_id": None}
     with mock.patch.object(llm, "ask", ask_question), \
+            mock.patch.object(research.hibuddy, "fetch_page", side_effect=offline), \
             mock.patch.object(ask, "archive_search", return_value=test_ask.POSTS[:2]), \
             mock.patch.object(ask, "reddit_search", return_value=[]), \
             mock.patch.object(ask, "recent_posts", return_value=[]), \

@@ -26,7 +26,9 @@ actually read, so it never claims more than it saw.
 
 Prices, potency, sizes and links always come from the OCS catalog, never
 from the model. The finished report lands in research/reports/ as JSON and
-the Research tab renders it.
+the Research tab renders it. Once it is saved, each product's store prices
+are added from hibuddy.ca: the cheapest and dearest store near Toronto for
+each size (add_store_prices; hibuddy.py does the reading).
 
 Run from the shell too:
 
@@ -34,6 +36,8 @@ Run from the shell too:
     python3 research.py custom --query "cold cure rosin" --no-llm
     python3 research.py flower --depth deep --provider codex --model gpt-6-sol --effort high
     python3 research.py --resume flower-20260924T182347Z --provider claude --model sonnet
+    python3 research.py --store-prices                    # re-check every saved report
+    python3 research.py --store-prices flower-20260925T072401Z.json
 """
 
 from __future__ import annotations
@@ -60,6 +64,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+import hibuddy
 import llm
 import ocs
 
@@ -1998,6 +2003,7 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
         write_json(path, document, indent=1)
         delete_checkpoint(out_dir, state["id"])
         report("write", f"Saved {path.name}", report=path.name)
+        store_prices_after_saving(out_dir, path.name, logger("write"), cancel)
         return path
 
     attach_catalog(guide, state["topicRows"], state["topicRows"])
@@ -2059,7 +2065,18 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
     write_json(path, document, indent=1)
     delete_checkpoint(out_dir, state["id"])
     report("write", f"Saved {path.name}", report=path.name)
+    store_prices_after_saving(out_dir, path.name, logger("write"), cancel)
     return path
+
+
+def store_prices_after_saving(out_dir: Path, name: str, log: Callable[[str], None],
+                              cancel: threading.Event | None) -> None:
+    """The guide is already saved: store prices are an extra, and nothing that
+    goes wrong while checking them may cost the run."""
+    try:
+        add_store_prices(out_dir, name, log, cancel)
+    except Exception as error:  # a bug in the extra must not fail a finished run
+        log(f"Store prices were skipped: {error!r}")
 
 
 # ── Checkpoints (runs waiting to continue) ────────────────────────────────
@@ -2512,6 +2529,10 @@ class Jobs:
             self._finish(status="error", error=f"Unexpected error: {error!r}")
 
 
+# Saved reports are rewritten in place (archive flag, store prices); one at a time.
+REPORT_LOCK = threading.Lock()
+
+
 def read_report(out_dir: Path, name: str) -> dict[str, Any] | None:
     if not REPORT_NAME.fullmatch(name):
         return None
@@ -2523,13 +2544,148 @@ def read_report(out_dir: Path, name: str) -> dict[str, Any] | None:
 
 def set_archived(out_dir: Path, name: str, archived: bool) -> bool:
     """Flag a guide as archived (or not) inside its own file, so every device agrees."""
+    with REPORT_LOCK:
+        document = read_report(out_dir, name)
+        if document is None:
+            return False
+        document["archived"] = archived
+        document["archivedAt"] = now_iso() if archived else None
+        write_json(out_dir / "reports" / name, document, indent=1)
+    return True
+
+
+# ── Store prices (hibuddy.ca) ─────────────────────────────────────────────
+#
+# Each product gets product["hibuddy"] = {url, size, sizes, checked}: its
+# hibuddy page (None when hibuddy has no such product), every size the stores
+# near hibuddy.NEAR list it in as {size, low, high, stores}, which of those
+# sizes is the one the guide prices (OCS's; None when no store there lists
+# that size), and when that was read. The report gets storePrices, a summary
+# for the page to explain where the numbers come from. A refresh only changes
+# the products it could check.
+
+# hibuddy's kind of product, from its OCS listing when it has one, else from
+# the guide's topic. hibuddy.py turns a kind into the categories it may be in.
+STORE_KIND_BY_SUBCATEGORY = {
+    "510 Thread Cartridges": "cart", "Disposable Pens": "disposable", "Dried Flower": "flower",
+    "Pre-Rolls": "preroll", "Capsules": "capsule", "Sublingual Strips": "capsule", "Oils": "tincture",
+}
+STORE_KIND_BY_CATEGORY = {"Edibles": "edible", "Extracts": "concentrate", "Flower": "flower", "Topicals": "topical"}
+STORE_KIND_BY_TOPIC = {
+    "live-carts": "cart", "disposables": "disposable", "flower": "flower", "prerolls": "preroll",
+    "rosin": "concentrate", "resin": "concentrate", "hash": "concentrate", "edibles": "edible",
+}
+# hibuddy stops answering a client that asks too often. This many unreadable
+# pages in a row means that has happened: stop asking, keep what was read.
+STORE_GIVE_UP = 3
+
+
+def store_kind(product: dict[str, Any], topic_key: str) -> str:
+    row = product.get("ocs") or {}
+    return (STORE_KIND_BY_SUBCATEGORY.get(row.get("subcategory") or "")
+            or STORE_KIND_BY_CATEGORY.get(row.get("category") or "")
+            or STORE_KIND_BY_TOPIC.get(topic_key, ""))
+
+
+def store_names(product: dict[str, Any]) -> list[tuple[str, str]]:
+    """(name, brand) to look a product up as: its OCS listing first, the exact
+    item and size the guide prices, then the guide's own name without the
+    flavours it lists ("Amped Live Resin 510 (Pineapple Express, ...)")."""
+    row = product.get("ocs") or {}
+    names = []
+    if row.get("title"):
+        names.append((row["title"], row.get("brand") or product.get("brand") or ""))
+    own = re.split(r"[(/—]", str(product.get("name") or ""))[0].strip()
+    if own:
+        names.append((own, product.get("brand") or ""))
+    return list(dict.fromkeys(names))
+
+
+def priced_products(document: dict[str, Any]) -> list[dict[str, Any]]:
+    """The products of a report to look up. An answer to a question can name
+    anything (a grinder, a strain); only the ones matched to OCS are things
+    a store sells."""
+    products = (document.get("guide") or {}).get("products") or []
+    question = document.get("kind") == "question"
+    return [p for p in products if isinstance(p, dict) and p.get("id") and (p.get("ocs") or not question)]
+
+
+def check_store_prices(products: list[dict[str, Any]], topic_key: str, log: Callable[[str], None],
+                       cancel: threading.Event | None = None) -> dict[str, dict[str, Any]]:
+    """{product id: its hibuddy block}, for every product that could be checked."""
+    found: dict[str, dict[str, Any]] = {}
+    unreadable = 0
+    for done, product in enumerate(products, 1):
+        if cancel is not None and cancel.is_set():
+            log(f"Stopped checking store prices after {len(found)} of {len(products)} products")
+            break
+        try:
+            url = None
+            for name, brand in store_names(product):
+                url = hibuddy.lookup(name, brand, store_kind(product, topic_key))
+                if url:
+                    break
+            sizes = hibuddy.store_prices(url) if url else []
+        except hibuddy.Unavailable as error:
+            unreadable += 1
+            if unreadable >= STORE_GIVE_UP:
+                log(f"hibuddy stopped answering ({error}); kept the {len(found)} of {len(products)} "
+                    "products checked so far. Try again later.")
+                break
+            continue
+        unreadable = 0
+        found[product["id"]] = {
+            "url": url,
+            "size": hibuddy.matching_size(sizes, (product.get("ocs") or {}).get("size") or ""),
+            "sizes": sizes,
+            "checked": now_iso(),
+        }
+        if done % 10 == 0 and done < len(products):
+            log(f"Store prices: {done} of {len(products)} products checked")
+    return found
+
+
+def add_store_prices(out_dir: Path, name: str, log: Callable[[str], None] = print,
+                     cancel: threading.Event | None = None) -> dict[str, Any] | None:
+    """Check a saved report's products on hibuddy and write what was found into
+    it. Returns the report's storePrices, or None if there is no such report
+    or nothing could be checked."""
     document = read_report(out_dir, name)
     if document is None:
-        return False
-    document["archived"] = archived
-    document["archivedAt"] = now_iso() if archived else None
-    write_json(out_dir / "reports" / name, document, indent=1)
-    return True
+        return None
+    products = priced_products(document)
+    if not products:
+        return None
+    near = hibuddy.NEAR["name"]
+    log(f"Checking store prices for {len(products)} product{'s' if len(products) != 1 else ''} on hibuddy.ca, near {near} "
+        f"(one page every {hibuddy.REQUEST_GAP:g} s, so a few minutes)")
+    found = check_store_prices(products, (document.get("topic") or {}).get("key") or "", log, cancel)
+    if not found:
+        return None
+
+    with REPORT_LOCK:
+        # Read it again: it may have been archived while hibuddy was asked.
+        document = read_report(out_dir, name)
+        if document is None:
+            return None
+        products = priced_products(document)
+        for product in products:
+            if product["id"] in found:
+                product["hibuddy"] = found[product["id"]]
+        checked = [p["hibuddy"] for p in products if p.get("hibuddy")]
+        summary = {
+            "source": "hibuddy.ca",
+            "near": near,
+            "checked": max(c["checked"] for c in checked),
+            "products": len(products),
+            "found": sum(1 for c in checked if c["url"]),
+            "priced": sum(1 for c in checked if c["sizes"]),
+        }
+        document["storePrices"] = summary
+        write_json(out_dir / "reports" / name, document, indent=1)
+    log(f"Store prices: {summary['priced']} of {summary['products']} products are sold near {near}; "
+        f"{summary['found'] - summary['priced']} more are on hibuddy but not near there")
+    return summary
 
 
 def delete_report(out_dir: Path, name: str) -> bool:
@@ -2547,6 +2703,8 @@ def main() -> None:
     parser.add_argument("topic", nargs="?", choices=[*TOPICS, "custom", "question"],
                         help="question: --query is a free question on any theme (needs a writer)")
     parser.add_argument("--resume", metavar="CHECKPOINT", help="continue a paused run (see research/checkpoints/)")
+    parser.add_argument("--store-prices", nargs="*", metavar="REPORT",
+                        help="check the store prices of saved reports on hibuddy.ca again (all of them if none named)")
     parser.add_argument("--query", default="", help="search words for custom; the question for question")
     parser.add_argument("--depth", choices=list(DEPTHS), default="quick")
     parser.add_argument("--provider", choices=[*llm.PROVIDERS, "none"], default="claude",
@@ -2557,6 +2715,15 @@ def main() -> None:
     parser.add_argument("--subreddit", action="append", help=f"repeatable (default: {', '.join(DEFAULT_SUBREDDITS)})")
     parser.add_argument("--out", type=Path, default=Path(__file__).resolve().parent / "research")
     args = parser.parse_args()
+
+    if args.store_prices is not None:
+        out_dir = args.out.resolve()
+        names = args.store_prices or [row["name"] for row in list_reports(out_dir)]
+        for name in names:
+            print(f"{name}:")
+            if add_store_prices(out_dir, name, lambda message: print(f"  {message}", flush=True)) is None:
+                print("  nothing written (no such report, no products, or hibuddy isn't answering)")
+        return
 
     provider = "none" if args.no_llm else args.provider
     model, effort = llm.check_choice(provider, args.model, args.effort) if provider != "none" else ("", "")

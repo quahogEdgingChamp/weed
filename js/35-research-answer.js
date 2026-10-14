@@ -153,6 +153,7 @@ function answerProduct(r, p) {
     <div class="rs-actions">
       ${o?.url ? `<a class="btn btn-secondary btn-small" href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">On OCS${o.price != null ? ` · ${esc(money(o.price))}` : ""}</a>` : ""}
       ${o ? `<button class="btn btn-ghost btn-small" type="button" data-add="${esc(p.id)}">Add to shopping list</button>` : ""}
+      ${p.hibuddy ? storePrices(p) : ""}
       <span class="rs-owned" data-owned="${esc(p.id)}"></span>
     </div>
     ${threadLinks(r, p.threads)}
@@ -187,6 +188,7 @@ function answerMethod(r) {
       <li>The model read ${num(s.threadsRead)} threads and ${num(s.commentsRead)} comments${
         s.parts ? `, in ${num(s.parts)} parts: it took notes on each part, then answered from all the notes` : " in one pass"
       }.${s.ocsTopicProducts ? ` Products were matched against ${num(s.ocsTopicProducts)} OCS listings of the brands people named; prices and links come from OCS.` : ""}</li>
+      ${storeMethod(r)}
       <li>${esc(r.writer?.note || "")}</li>
       <li>Took ${Math.round((s.seconds || 0) / 60)} min${usageText(r.writer)}.</li>
     </ol>

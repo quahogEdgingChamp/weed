@@ -148,6 +148,7 @@ function sectionMethod(r) {
           : ""
       }
       <li>Matched brands against all ${Number(s.ocsProducts || 0).toLocaleString()} products on ocs.ca, ${s.ocsTopicProducts} of them in this category. Prices, sizes, potency and links come from OCS, never from the model.</li>
+      ${storeMethod(r)}
       <li>${esc(r.writer?.note || "")}${r.writer?.by && r.writer.by !== "counts" ? " Tiers are the community's consensus as the model read it, not lab results." : ""}</li>
       <li>Took ${Math.round((s.seconds || 0) / 60)} min${usageText(r.writer)}.</li>
     </ol>
@@ -162,6 +163,14 @@ function sectionMethod(r) {
         : ""
     }`
   );
+}
+
+function storeMethod(r) {
+  const store = r.storePrices;
+  if (!store?.checked) return "";
+  return `<li>Looked each product up on hibuddy.ca on ${esc(when(store.checked))}: ${num(store.found)} of ${num(store.products)} are listed there,
+    ${num(store.priced)} at stores near ${esc(store.near)}. A store price range is the cheapest and dearest of those stores today for the
+    size OCS sells; hibuddy keeps no price history.</li>`;
 }
 
 function threadLinks(r, ids) {

@@ -556,8 +556,14 @@ function plantResearchQueue() {
     await gp.waitForSelector("#rs-rankings");
     check(await gp.isVisible(".rs-toc"), "the guide shows its section menu");
     check((await gp.$$(".rs-card")).length === 1, "the guide shows its product card");
+    check(await gp.isVisible(".rs-card .rs-store-range >> text=$41.50–$52.00"), "the card shows the store price range beside Store prices");
+    check((await gp.getAttribute(".rs-card .rs-store a", "href")) === `https://hibuddy.ca/product/${"e".repeat(32)}`,
+      "Store prices goes straight to the product's hibuddy page");
+    check(await gp.isVisible(".rs-compare >> text=$41.50–$52.00"), "the compare table has the store range too");
+    check(await gp.isVisible("#rs-method >> text=Looked each product up on hibuddy.ca"), "the method says where store prices come from");
     await gp.click("[data-act=deck]");
     await gp.waitForSelector(".rs-deck .rs-deck-card");
+    check(await gp.isVisible(".rs-deck-card >> text=Stores $41.50–$52.00 · 1g"), "the deck card shows the store range");
     const box = await gp.$eval(".rs-deck-card", (card) => { const r = card.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width }; });
     await gp.mouse.move(box.x, box.y);
     await gp.mouse.down();
@@ -585,6 +591,10 @@ function plantResearchQueue() {
     check(await waitFor(() => gp.isVisible(`[data-open="${guide}"]`)), "Back lists it under Saved guides");
     check(gp.errors.length === 0, `guide no script errors (${gp.errors.join(" | ")})`);
     await gp.context().close();
+    const gphone = await newPage(browser, `${url}?view=research&report=${encodeURIComponent(guide)}`, { width: 390, height: 844 });
+    await gphone.waitForSelector(".rs-card .rs-store-range");
+    check(await noHorizontalScroll(gphone), "390px guide: no sideways scrolling");
+    await gphone.context().close();
 
     step("Research: ask a question");
     const qa = await newPage(browser, `${url}?view=research`);

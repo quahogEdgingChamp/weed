@@ -14,6 +14,14 @@ import ask  # noqa: E402
 import llm  # noqa: E402
 import research  # noqa: E402
 
+
+def setUpModule() -> None:
+    # hibuddy never answers here either: an answer is saved without store prices.
+    patcher = mock.patch.object(research.hibuddy, "fetch_page", side_effect=research.hibuddy.Unavailable("offline"))
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+
+
 PLAN = {"title": "Live resin carts and studying", "restated": "How do live resin carts affect studying?",
         "subreddits": [{"name": "r/trees", "why": "big"}, {"name": "ADHD", "why": "focus"}, {"name": "bad name!", "why": ""},
                        {"name": "trees", "why": "duplicate"}],

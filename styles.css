@@ -4630,6 +4630,23 @@ button.rs-pick-name:hover {
   text-decoration: none;
 }
 
+/* "Store prices" and its range wrap as one unit. */
+.rs-store {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--s-1);
+}
+
+.rs-store-range {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .rs-owned:empty {
   display: none;
 }
@@ -4828,7 +4845,8 @@ button.rs-owned-chip {
     flex: 1 1 140px;
   }
 
-  .rs-report-top {
+  .rs-report-top,
+  .rs-report-actions {
     flex-wrap: wrap;
   }
 }

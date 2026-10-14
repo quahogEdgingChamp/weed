@@ -10,10 +10,13 @@ function sectionRankings(g) {
   const terps = terpeneCounts(products).map(([key]) => key);
   const hasSolo = products.some((p) => p.solo && ["great", "good"].includes(p.solo.fit));
   const option = (value, label, current) => `<option value="${esc(value)}" ${current === value ? "selected" : ""}>${esc(label)}</option>`;
+  const store = ui.report?.storePrices;
   return section(
     "rankings",
     `Rankings <span class="rs-count" id="rs-count"></span>`,
-    "",
+    store?.checked
+      ? `Store prices are the cheapest and dearest of the stores near ${esc(store.near)} that list the product on hibuddy.ca, as of ${esc(when(store.checked))}.`
+      : "",
     `<div class="rs-controls">
       <label class="rs-search"><span class="sr-only">Search products</span>
         <svg class="icon" aria-hidden="true"><use href="#i-search" /></svg>
@@ -189,10 +192,61 @@ function card(p) {
       </button>
       <span class="rs-owned" data-owned="${esc(p.id)}"></span>
       ${o ? `<a class="btn btn-ghost btn-small" href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">OCS <svg class="icon" aria-hidden="true"><use href="#i-external" /></svg></a>` : ""}
-      <a class="btn btn-ghost btn-small" href="/api/hibuddy?${esc(new URLSearchParams({ name: String(p.name).split(/[(/—]/)[0].trim(), brand: p.brand || "" }))}" target="_blank" rel="noopener noreferrer">Store prices <svg class="icon" aria-hidden="true"><use href="#i-external" /></svg></a>
+      ${storePrices(p)}
       <a class="btn btn-ghost btn-small" href="https://www.reddit.com/r/TheOCS/search/?q=${search}&restrict_sr=1&sort=new" target="_blank" rel="noopener noreferrer">Latest posts <svg class="icon" aria-hidden="true"><use href="#i-external" /></svg></a>
     </div>
   </article>`;
+}
+
+/* Store prices from hibuddy.ca, which research.py writes into the report as
+   p.hibuddy = {url, size, sizes: [{size, low, high, stores}], checked}: url
+   is null when hibuddy has no such product, size is the one OCS sells (null
+   when no store lists that size), and sizes is empty when no store near
+   storePrices.near lists it at all. Older reports have no p.hibuddy. */
+const HIBUDDY_PAGE = /^https:\/\/hibuddy\.ca\/product\/[a-f0-9]{32}$/;
+
+/* The size to show: the one OCS sells, else the one most stores list. */
+function storeRange(p) {
+  const sizes = p.hibuddy?.sizes || [];
+  if (!sizes.length) return null;
+  return sizes.find((z) => z.size === p.hibuddy.size) || sizes.reduce((a, b) => (b.stores > a.stores ? b : a));
+}
+
+function rangeText(z) {
+  return z.low === z.high ? money(z.low) : `${money(z.low)}–${money(z.high)}`;
+}
+
+/* Straight to the product's hibuddy page when the report knows it. Else
+   serve.py looks it up when the link is opened; the read-only copy has no
+   serve.py, and a product hibuddy didn't have gets a plain hibuddy search. */
+function storeHref(p) {
+  const url = p.hibuddy?.url;
+  if (url && HIBUDDY_PAGE.test(url)) return url;
+  const name = String(p.name).split(/[(/—]/)[0].trim();
+  if (READ_ONLY || p.hibuddy) {
+    return `https://hibuddy.ca/products/search?${new URLSearchParams({ q: [p.brand, name].filter(Boolean).join(" ") })}`;
+  }
+  return `/api/hibuddy?${new URLSearchParams({ name, brand: p.brand || "" })}`;
+}
+
+/* The "Store prices" link, and beside it the range for the size OCS sells. */
+function storePrices(p) {
+  const near = ui.report?.storePrices?.near || "you";
+  const hb = p.hibuddy;
+  const z = storeRange(p);
+  let range = "";
+  if (z) {
+    const title = `Cheapest and dearest of the ${z.stores} store${z.stores === 1 ? "" : "s"} near ${near} listing the ${z.size} on hibuddy.ca${hb.checked ? `, ${when(hb.checked)}` : ""}`;
+    range = `<span class="rs-store-range" title="${esc(title)}"><strong class="private">${rangeText(z)}</strong>
+      <span class="rs-hint">${esc(z.size)} · ${num(z.stores)} store${z.stores === 1 ? "" : "s"}</span></span>`;
+  } else if (hb?.url) {
+    range = `<span class="rs-store-range rs-hint">None near ${esc(near)}</span>`;
+  } else if (hb) {
+    range = `<span class="rs-store-range rs-hint">Not on hibuddy</span>`;
+  }
+  return `<span class="rs-store">
+    <a class="btn btn-ghost btn-small" href="${esc(storeHref(p))}" target="_blank" rel="noopener noreferrer">Store prices <svg class="icon" aria-hidden="true"><use href="#i-external" /></svg></a>
+    ${range}</span>`;
 }
 
 function refreshOwnership() {
@@ -320,6 +374,12 @@ const COLUMNS = [
   ["price", "OCS $", (p) => money(p.ocs?.price), (p) => p.ocs?.price ?? Infinity],
   ["size", "Size", (p) => esc(p.ocs?.size || "—"), (p) => grams(p.ocs?.size) ?? Infinity],
   ["ppg", "$ / g", (p) => (p._ppg ? money(p._ppg) : "—"), (p) => p._ppg ?? Infinity],
+  ["stores", "Stores $", (p) => {
+    const z = storeRange(p);
+    if (!z) return "—";
+    /* Say the size when it isn't the one in the OCS columns. */
+    return `<span class="private">${rangeText(z)}</span>${z.size === p.hibuddy.size ? "" : ` <span class="rs-hint">${esc(z.size)}</span>`}`;
+  }, (p) => storeRange(p)?.low ?? Infinity],
   ["thc", "THC", (p) => thcText(p.ocs), (p) => p._thc],
   ["where", "Where", (p) => (p.ocs ? (p.ocs.online ? "online" : "stores") : "—"), (p) => (p.ocs ? (p.ocs.online ? 0 : 1) : 2)],
   ["talk", "Mentions", (p) => (p._mention ? p._mention.mentions : "—"), (p) => p._mention?.mentions || 0],
@@ -327,10 +387,15 @@ const COLUMNS = [
 
 function sectionCompare(g) {
   if (!(g.products || []).length) return "";
+  const store = ui.report?.storePrices;
   return section(
     "compare",
     "Compare",
-    "Select a column to sort. Prices are OCS list prices before tax; stores are often a few dollars cheaper. Select a row to open its card.",
+    `Select a column to sort. OCS&nbsp;$ is the OCS list price before tax${
+      store?.checked
+        ? `; Stores&nbsp;$ is the cheapest to dearest store near ${esc(store.near)} on hibuddy.ca (${esc(when(store.checked))})`
+        : "; stores are often a few dollars cheaper"
+    }. Select a row to open its card.`,
     `<div class="rs-table-wrap"><table class="rs-table rs-compare"><thead></thead><tbody></tbody></table></div>`
   );
 }
