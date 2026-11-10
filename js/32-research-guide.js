@@ -142,6 +142,7 @@ function drawReport() {
     ["tips", "Tips", (g.tips || []).length],
     ["glossary", "Glossary", (g.glossary || []).length],
     ["faq", "FAQ", (g.faq || []).length],
+    ["start", "How to start", Boolean(g.start?.summary)],
     ["method", "Method", true],
   ].filter(([, , present]) => present);
 
@@ -196,6 +197,7 @@ function drawReport() {
       ${sectionTips(g)}
       ${sectionGlossary(g)}
       ${sectionFaq(g)}
+      ${sectionStart(r, g)}
       ${sectionMethod(r)}
 
       <p class="rs-foot">Independent notes from public Reddit discussion and the OCS catalog. Not medical advice.

@@ -2065,8 +2065,34 @@ def write(state: dict[str, Any], *, provider: str, model: str = "", effort: str 
     write_json(path, document, indent=1)
     delete_checkpoint(out_dir, state["id"])
     report("write", f"Saved {path.name}", report=path.name)
+    if provider in llm.PROVIDERS:
+        start_after_saving(out_dir, path.name, provider=provider, model=model, effort=effort, thread_meta=meta,
+                           log=logger("write"), cancel=cancel)
     store_prices_after_saving(out_dir, path.name, logger("write"), cancel)
     return path
+
+
+def start_after_saving(out_dir: Path, name: str, *, provider: str, model: str, effort: str,
+                       thread_meta: dict[str, dict[str, Any]], log: Callable[[str], None],
+                       cancel: threading.Event | None) -> None:
+    """The guide is saved already: its How to start section (start.py) is
+    written after it, by the same writer, from every thread the run read
+    (`thread_meta`), and nothing that goes wrong here may cost the run. A
+    guide left without one gets it later with
+    `python3 research.py --how-to-start <name>`."""
+    import start
+
+    later = f"add it later with: python3 research.py --how-to-start {name}"
+    try:
+        start.add_start(out_dir, name, provider=provider, model=model, effort=effort, log=log, cancel=cancel,
+                        threads={tid: start.thread_row(m) for tid, m in thread_meta.items()})
+    except llm.LimitError as error:
+        log(f"How to start was skipped: {llm.LABELS.get(provider, provider)} hit its plan's usage limit"
+            + (f" (it resets {error.resets})" if error.resets else "") + f"; {later}")
+    except Cancelled:
+        log(f"How to start was stopped; {later}")
+    except Exception as error:  # a bug in the extra must not fail a finished run
+        log(f"How to start was skipped: {str(error)[:300]}; {later}")
 
 
 def store_prices_after_saving(out_dir: Path, name: str, log: Callable[[str], None],
@@ -2161,6 +2187,7 @@ def list_reports(out_dir: Path) -> list[dict[str, Any]]:
             "depth": doc.get("depth"),
             "headline": guide.get("headline"),
             "products": len(guide.get("products") or []),
+            "howToStart": bool(guide.get("start")),
             "by": writer.get("by"),
             "model": writer.get("model"),
             "effort": writer.get("effort") if writer.get("by") not in (None, "counts") else None,
@@ -2705,6 +2732,9 @@ def main() -> None:
     parser.add_argument("--resume", metavar="CHECKPOINT", help="continue a paused run (see research/checkpoints/)")
     parser.add_argument("--store-prices", nargs="*", metavar="REPORT",
                         help="check the store prices of saved reports on hibuddy.ca again (all of them if none named)")
+    parser.add_argument("--how-to-start", nargs="*", metavar="REPORT",
+                        help="write the How to start section of saved guides with --provider/--model/--effort "
+                             "(rewrites the ones named; with none named, every guide that lacks one)")
     parser.add_argument("--query", default="", help="search words for custom; the question for question")
     parser.add_argument("--depth", choices=list(DEPTHS), default="quick")
     parser.add_argument("--provider", choices=[*llm.PROVIDERS, "none"], default="claude",
@@ -2727,6 +2757,33 @@ def main() -> None:
 
     provider = "none" if args.no_llm else args.provider
     model, effort = llm.check_choice(provider, args.model, args.effort) if provider != "none" else ("", "")
+
+    if args.how_to_start is not None:
+        import start
+
+        if provider == "none":
+            parser.error("--how-to-start needs a writer: --provider claude, codex or grok")
+        out_dir = args.out.resolve()
+        names = args.how_to_start or [row["name"] for row in list_reports(out_dir)
+                                      if row["kind"] != "question" and not row["howToStart"]]
+        if not names:
+            print("Every guide has its How to start section already. Name one to write it again.")
+        failed = 0
+        for name in names:
+            print(f"{name}:", flush=True)
+            try:
+                if start.add_start(out_dir, name, provider=provider, model=model, effort=effort,
+                                   log=lambda message: print(f"  {message}", flush=True)) is None:
+                    print("  nothing written (no such guide, an answer to a question, or no evidence found)")
+                    failed += 1
+            except llm.LimitError as error:
+                print(f"  {llm.LABELS[provider]} hit its usage limit" + (f"; it resets {error.resets}" if error.resets else "")
+                      + ". Run this again later: the guides already written keep their section.")
+                raise SystemExit(2)
+            except llm.ModelError as error:
+                print(f"  failed: {str(error)[:300]}")
+                failed += 1
+        raise SystemExit(1 if failed else 0)
     try:
         if args.resume:
             path = resume(args.resume, provider=provider, model=model, effort=effort, out_dir=args.out.resolve())

@@ -561,6 +561,21 @@ function plantResearchQueue() {
       "Store prices goes straight to the product's hibuddy page");
     check(await gp.isVisible(".rs-compare >> text=$41.50–$52.00"), "the compare table has the store range too");
     check(await gp.isVisible("#rs-method >> text=Looked each product up on hibuddy.ca"), "the method says where store prices come from");
+    check(await gp.isVisible(".rs-toc [data-jump=rs-start]"), "the section menu lists How to start");
+    check(await gp.isVisible("#rs-start .rs-start-summary >> text=One or two short puffs"), "How to start opens with the method in short");
+    check((await gp.$$("#rs-start .rs-start-steps > li")).length === 2, "it lists the steps in order");
+    check(await gp.isVisible("#rs-start .rs-start-basis[data-basis=general] >> text=General advice"), "a step not from the threads says so");
+    check((await gp.getAttribute("#rs-start .rs-start-steps .rs-threads a", "href")) === "https://www.reddit.com/r/Carts/comments/s1/",
+      "a step links to the searched thread it rests on");
+    check(await gp.isVisible("#rs-start .rs-start-help >> text=It passes."), "it says what helps when it's too much");
+    await gp.click("#rs-start .rs-start-said summary");
+    check((await gp.getAttribute("#rs-start .rs-quote a", "href")) === "https://www.reddit.com/r/Carts/comments/s1/_/k1/",
+      "its quote links to the comment");
+    check(await gp.isVisible("#rs-start .rs-start-method >> text=Some evidence"), "it says how strong the evidence is");
+    await gp.locator("#rs-start").screenshot({ path: path.join(SHOTS, "research-how-to-start.png") });
+    await gp.click("#rs-start .rs-start-picks [data-jump]");
+    check(await waitFor(() => gp.evaluate(() => Math.abs(document.getElementById("rs-p-x").getBoundingClientRect().top) < 400)),
+      "a first pick jumps to its product card");
     await gp.click("[data-act=deck]");
     await gp.waitForSelector(".rs-deck .rs-deck-card");
     check(await gp.isVisible(".rs-deck-card >> text=Stores $41.50–$52.00 · 1g"), "the deck card shows the store range");

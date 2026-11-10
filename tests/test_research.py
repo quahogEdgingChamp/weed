@@ -28,6 +28,14 @@ def setUpModule() -> None:
     patcher = mock.patch.object(research.hibuddy, "fetch_page", side_effect=research.hibuddy.Unavailable("offline"))
     patcher.start()
     unittest.addModuleCleanup(patcher.stop)
+    # Nor does the search for first-time advice find anything, and the guides'
+    # threads aren't on file: no How to start section, and no model call for
+    # one. test_start.py stands in for both.
+    import start
+
+    patcher = mock.patch.object(start, "find_threads", return_value=([], {}))
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
 
 
 def product(handle="x", title="Thing", vendor="Brand", tags=(), price="39.95", size="1g", available=True):

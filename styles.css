@@ -4781,6 +4781,216 @@ button.rs-owned-chip {
   font-size: 0.88rem;
 }
 
+/* How to start: the method in a sentence, then the steps. */
+
+.rs-start-lead {
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  border-left: 4px solid var(--accent);
+}
+
+.rs-start-summary {
+  max-width: 70ch;
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.rs-start-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: var(--s-2) var(--s-5);
+}
+
+.rs-start-facts dt,
+.rs-start-when {
+  color: var(--accent-ink);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rs-start-facts dd {
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
+
+.rs-start-timeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: var(--s-2);
+  padding: 0;
+  list-style: none;
+}
+
+.rs-start-timeline li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-sm);
+  background: var(--accent-wash);
+  font-size: 0.88rem;
+}
+
+.rs-start-steps {
+  display: grid;
+  gap: var(--s-2);
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.rs-start-steps > li {
+  position: relative;
+  padding: var(--s-3) var(--s-4) var(--s-3) 3.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  counter-increment: step;
+}
+
+.rs-start-steps > li::before {
+  position: absolute;
+  top: var(--s-3);
+  left: var(--s-4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  content: counter(step);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.rs-start-step-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-1) var(--s-3);
+}
+
+.rs-start-step-head h3 {
+  font-size: 0.95rem;
+}
+
+.rs-start-steps p {
+  margin-top: 2px;
+  color: var(--ink-2);
+  font-size: 0.88rem;
+}
+
+.rs-start-basis {
+  padding: 1px var(--s-2);
+  border-radius: 999px;
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.rs-start-basis[data-basis="general"] {
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+
+.rs-start-basis[data-basis="both"] {
+  background: var(--violet-wash);
+  color: var(--violet-ink);
+}
+
+.rs-start-tolerance {
+  max-width: 78ch;
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
+
+.rs-start-tolerance strong {
+  color: var(--ink);
+}
+
+.rs-start-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: var(--s-3);
+}
+
+.rs-start-grid .card {
+  padding: var(--s-4);
+}
+
+.rs-start-grid h3,
+.rs-start-picks h3 {
+  margin-bottom: var(--s-2);
+  font-size: 0.95rem;
+}
+
+.rs-start-mistakes {
+  border-top: 4px solid var(--warn);
+}
+
+.rs-start-help {
+  border-top: 4px solid var(--accent);
+}
+
+.rs-start-grid ul {
+  display: grid;
+  gap: var(--s-2);
+  padding-left: 1.1rem;
+  list-style: disc;
+  color: var(--ink-2);
+  font-size: 0.88rem;
+}
+
+.rs-start-grid strong {
+  color: var(--ink);
+}
+
+.rs-start-picks ul {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.rs-start-picks li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--s-2);
+}
+
+.rs-start-picks .rs-pick-name {
+  font-size: 0.95rem;
+}
+
+.rs-start-method {
+  max-width: 78ch;
+  color: var(--ink-3);
+  font-size: 0.8rem;
+}
+
+.rs-start-evidence {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 var(--s-2);
+  border-radius: 999px;
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+.rs-start-evidence[data-level="thin"] {
+  background: var(--warn-wash);
+  color: var(--warn);
+}
+
 .rs-method {
   display: grid;
   gap: var(--s-2);

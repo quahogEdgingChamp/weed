@@ -104,6 +104,14 @@ dependencies.
   night & sleep, flavour, strongest, solo sessions, beginners, skip), trends, brand report cards, tiered rankings with pros,
   cons and verdicts, things to skip, tips, glossary and FAQ. Every quote is
   checked word for word against the real comment and dropped if it isn't there
+- Every guide ends with **How to start**: the method in a sentence (for a
+  cart: one short puff on a low battery, wait 10–15 minutes, then decide),
+  how much the first time, how long to wait, when it kicks in, peaks and
+  wears off, the steps of a first session, what's different if you already
+  smoke, how people overdo it, what helps if it's too much, gentler first
+  picks from the guide's products, and verified quotes. Each step says
+  whether people in the threads say it or it's a general harm-reduction
+  basic, and the section says how strong its evidence is (see below)
 - Without a model, a plainer guide is built from mention counts and tone
 - Every guide says how much was fetched and how much the model actually read
 - Product cards show indica / sativa / hybrid (from OCS), strength, best
@@ -280,6 +288,35 @@ hibuddy keeps no price history on the page.
   `python3 research.py --store-prices` (all) or `--store-prices <report>.json`.
   A guide of ~45 products takes a few minutes.
 
+## How the How to start section works
+
+`start.py` writes it once the guide is saved, with the same writer, model
+and thinking level, in one more model call (2–4 min). Buying threads say
+little about how to start, so it reads two kinds of evidence:
+
+| Part | What | Where it comes from |
+|---|---|---|
+| A | the guide's own threads, only the comments about starting out, dosing or taking too much | `research/cache/threads/` (a pattern picks "start low", "2 small puffs", "wait 10 minutes", "greened out", "redosed"…) |
+| B | up to 10 threads asking or answering how to start with this kind of product, every comment, starting talk first | each topic's subreddits in `FORMS` (r/Carts for carts, r/edibles, r/Dabs, r/hash, r/trees…): their newest posts (the whole year on file for r/TheOCS and r/CanadianCannabisLPs), plus the archive's full-text search when it answers |
+
+The writer may fill gaps with general harm-reduction basics (Canada's
+Lower-Risk Cannabis Use Guidelines) and must mark those steps "General
+advice". It is saved as `guide.start`, and where it came from as
+`startMethod` (writer, comments read, subreddits, quotes kept and dropped).
+Quotes are checked like the guide's; a quote's thread is set from its
+comment.
+
+- **Best effort:** if the writer hits its usage limit or fails here, the
+  guide is kept without the section, and the log says how to add it.
+- **Older guides, or one that missed it:**
+  `python3 research.py --how-to-start --provider claude --model opus --effort high`
+  writes it for every guide without one; name a report
+  (`--how-to-start <report>.json`) to write it again. Counts-only guides
+  get one too, written by the writer you name.
+- Answers to questions don't get one: they aren't about one kind of product.
+- The archive's full-text search often answers 422 when busy; a run then
+  goes on with the subreddits' newest posts, which always load.
+
 ## How research works
 
 `research.py` does the work; `serve.py` runs it in a background thread (one at
@@ -295,6 +332,7 @@ python3 research.py rosin --provider grok --model grok-4.7 --effort high
 python3 research.py --resume hash-20260924T182347Z --provider claude   # continue a paused run
 python3 research.py question --query "does a grinder card beat a grinder?" --provider codex
 python3 research.py --store-prices                                 # re-check every saved guide's store prices
+python3 research.py --how-to-start --model opus --effort high      # How to start for every guide without one
 ```
 
 | Stage | Source | Notes |
@@ -305,6 +343,7 @@ python3 research.py --store-prices                                 # re-check ev
 | Brand search (deep) | the archive's full-text comment search, for the category's 12 most-discussed brands | best effort; busy names can time out |
 | Parse | brand mentions (from OCS vendor names), month counts, keyword tone | |
 | Write | `claude -p --json-schema`, `codex exec --output-schema` or `grok --json-schema`, no tools (`llm.py`) | quick 1–5 min; deep 20–45 min |
+| How to start | the guide's threads, plus threads about starting out (see above); one more call to the same writer | 2–4 min; best effort |
 | Store prices | each product's hibuddy page, after the guide is saved (see above) | a few min; best effort |
 
 Prices, sizes, potency and links on the guide always come from the OCS
@@ -377,12 +416,13 @@ declared twice. A new script needs a line in both.
 | `core.js` | Validation, migration, merge, filters, insights (no DOM) |
 | `js/01-setup.js` … `js/20-start.js` | The page: storage and state, then one file per part (collection, filters, details, form, OCS, terpenes, shopping, insights, backups, menu, sync); `20-start.js` starts it |
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell and install |
-| `js/30-research-*.js` … | The Research tab: setup, home (launcher, progress, queue), guide, products, terpenes, answer (a question's page), events |
+| `js/30-research-*.js` … | The Research tab: setup, home (launcher, progress, queue), guide, products, deck, how to start, terpenes, answer (a question's page), events |
 | `fonts/` | Bricolage Grotesque (headings), self-hosted, SIL OFL |
 | `ocs.py` | Turns an ocs.ca link into fields |
 | `hibuddy.py` | Finds a product's hibuddy.ca page for the price links, and reads its store prices |
 | `research.py` | Reddit + OCS research runs, the guide writer, the run queue |
 | `ask.py` | Free questions: the plan, the searches, the answer's prompts and file |
+| `start.py` | A guide's How to start section: its evidence, prompt and schema, written after the guide |
 | `llm.py` | Claude / Codex / Grok CLI calls with a JSON schema, and their model lists |
 | `serve.py` | Static files, `/api/state`, `/api/snapshots`, `/api/lookup`, `/api/hibuddy`, `/api/research…` |
 | `publish_research.py`, `published/` | The guides, copied for the read-only public copy |
